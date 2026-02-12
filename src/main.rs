@@ -34,5 +34,11 @@ fn main() -> ExitCode {
 				continue;
 			},
 		};
+		for email in emails {
+			println!("====== new email ======");
+			println!("===> Senders: {:?}",email.senders);
+			println!("===> Recipients: {:?}",email.recipients);
+			println!("{}",email.body);
+		}
 	}
 }

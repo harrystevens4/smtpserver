@@ -1,14 +1,14 @@
 pub struct Email {
-	sender_address: String,
-	recipient_address: String,
-	body: String,
+	pub senders: Vec<String>,
+	pub recipients: Vec<String>,
+	pub body: String,
 }
 
 impl Default for Email {
 	fn default() -> Self {
 		Email {
-			sender_address: "anonymous".into(),
-			recipient_address: "anonymous".into(),
+			senders: vec![],
+			recipients: vec![],
 			body: String::new(),
 		}
 	}

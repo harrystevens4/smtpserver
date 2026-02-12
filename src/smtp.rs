@@ -1,5 +1,5 @@
 use crate::email::Email;
-use std::net::TcpStream;
+use std::net::{TcpStream,Shutdown};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
@@ -9,6 +9,7 @@ pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Er
 	smtp_handshake(&mut connection)?;
 	//====== process mail ======
 	let mut emails = vec![];
+	//multiple messages, one connection
 	loop {
 		let email = match smtp_receive_email(&mut connection){
 			//no more emails
@@ -19,57 +20,92 @@ pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Er
 			Ok(email) => email,
 		};
 		emails.push(email);
+		//mail has been stored
+		connection.write(b"250 Ok\r\n")?;
 	}
+	//close connection
+	connection.shutdown(Shutdown::Both)?;
 	Ok(emails)
 }
 
 fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
 	//ack connection
-	let _ = connection.write(b"220 smtpserver\r\n");
+	connection.write(b"220 smtpserver\r\n")?;
 	//wait for greeting
 	let buffer = readline(connection)?;
 	//verify greeting
 	if !buffer.to_ascii_uppercase().starts_with("HELO"){
 		return Err(io::Error::other("malformed greeting in request"));
 	}
+	connection.write(b"250 Ok\r\n")?;
 	Ok(())
 }
 
 fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
+	//=> based off RFC 5321 <=//
 	let mut senders: Vec<String> = vec![];
 	let mut recipients: Vec<String> = vec![];
+	let mut body = String::new();
 	loop {
-		let line = readline(connection)?;
+		let line = dbg!{readline(connection)}?;
 		if line.to_ascii_uppercase().starts_with("QUIT"){
 			//====== end of mail ======
 			return Err(io::Error::from(io::ErrorKind::ConnectionReset));
 		}else if line.to_ascii_uppercase().starts_with("MAIL FROM"){
 			//====== senders ======
-			let sender = line.split_once(':').ok_or(io::Error::other("bad smtp command"))?.1
+			let Some(sender) = line.split_once(':')
  				// extract address from between < and > brackets
-				.split_once('<').ok_or(io::Error::other("bad smtp address"))?.1
-				.split_once('>').ok_or(io::Error::other("bad smtp address"))?.0;
+				.map(|(_,x)| x.split_once('<')).flatten()
+				.map(|(_,x)| x.split_once('>')).flatten()
+				.map(|(x,_)| x)
+			else {
+				connection.write(b"501 Syntax error\r\n")?;
+				continue;
+			};
 			senders.push(sender.to_string());
 			//send positive ack
-			connection.write(b"250 Ok");
+			connection.write(b"250 Ok\r\n")?;
 		}else if line.to_ascii_uppercase().starts_with("RCPT TO"){
 			//====== recipients ======
-			let recipient = line.split_once(':').ok_or(io::Error::other("bad smtp command"))?.1
- 				// extract address from between < and > brackets
-				.split_once('<').ok_or(io::Error::other("bad smtp address"))?.1
-				.split_once('>').ok_or(io::Error::other("bad smtp address"))?.0;
+			// extract address from between < and > brackets 
+			let Some(recipient) = line.split_once(':')
+				.map(|(_,x)| x.split_once('<')).flatten()
+				.map(|(_,x)| x.split_once('>')).flatten()
+				.map(|(x,_)| x)
+			else {
+				connection.write(b"501 Syntax error\r\n")?;
+				continue;
+			};
 			recipients.push(recipient.to_string());
 			//send positive ack
-			connection.write(b"250 Ok");
-		}else if line.to_ascii_uppercase().starts_with("RCPT TO"){
+			connection.write(b"250 Ok\r\n")?;
+		}else if line.to_ascii_uppercase().starts_with("DATA"){
 			//====== email body ======
+			//send intermediate reply
+			connection.write(b"354 Ok\r\n")?;
+			//receive all lines of the body
+			loop {
+				let body_line = readline(connection)?;
+				//end of body
+				if body_line == "." {break}
+				//store the line
+				body += &(body_line + "\n");
+			}
+			body = body.trim_end_matches("\n").to_string();
+			//exit
+			break;
 		}else {
 			//====== command error ======
-			connection.write(b"500 Unknown command");
+			connection.write(b"500 Unknown command\r\n")?;
 			continue;
 		}
 	}
-	Ok(Email::default())
+	//====== construct the new email ======
+	Ok(Email {
+		senders,
+		recipients,
+		body,
+	})
 }
 
 fn readline(stream: &mut TcpStream) -> io::Result<String> {
@@ -81,8 +117,12 @@ fn readline(stream: &mut TcpStream) -> io::Result<String> {
 			.iter()
 			.map(|c| char::from(*c))
 			.collect::<String>()
-			.find('\n'){
-
+			.find('\n')
+			.map(|n| n+1)
+		{
+			stream.read(&mut read_buffer[..line_length])?;
+			line_buffer.extend_from_slice(&read_buffer[..line_length]);
+			break;
 		}else {
 			stream.read(&mut read_buffer)?;
 			line_buffer.extend_from_slice(&read_buffer);
@@ -93,6 +133,7 @@ fn readline(stream: &mut TcpStream) -> io::Result<String> {
 		.into_iter()
 		.map(char::from)
 		.collect::<String>()
+		.trim_end_matches('\n')
 		.trim_end_matches('\r')
 		.into()
 	)
