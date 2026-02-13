@@ -4,11 +4,19 @@ mod email;
 
 use crate::smtp::recieve_emails;
 use crate::maildb::MailDB;
+use args::Args;
 
 use std::net::{TcpListener};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+	//====== process arguments ======
+	let cmd_args = Args::gather(&[
+		('h', Some("help"),    false),
+		('f', Some("db-path"), true ),
+	]);
+	println!("{cmd_args:?}");
+	//====== database ======
 	println!("Connecting to mail database...");
 	let mail_db = match MailDB::open("/var/mail/smtpserver.db"){
 		Ok(db) => db,
