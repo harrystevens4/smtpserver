@@ -26,7 +26,6 @@ impl Email {
 	pub fn timestamp(&self) -> u64 {self.timestamp}
 	pub fn body(&self) -> String {self.body.clone()}
 	pub fn senders_string(&self) -> String {
-		let senders_string = String::new();
 		self.senders
 			.clone()
 			.into_iter()
@@ -34,7 +33,6 @@ impl Email {
 			.fold(String::new(),|senders,sender| senders + &sender)
 	}
 	pub fn recipients_string(&self) -> String {
-		let recipients_string = String::new();
 		self.recipients
 			.clone()
 			.into_iter()
