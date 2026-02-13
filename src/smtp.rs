@@ -52,7 +52,7 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 	let mut recipients: Vec<String> = vec![];
 	let mut body = String::new();
 	loop {
-		let line = dbg!{readline(connection)}?;
+		let line = readline(connection)?;
 		if line.to_ascii_uppercase().starts_with("QUIT"){
 			//====== end of mail ======
 			return Err(io::Error::from(io::ErrorKind::ConnectionReset));
