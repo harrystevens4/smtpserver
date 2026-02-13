@@ -106,18 +106,19 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 		}
 	}
 	//====== construct the new email ======
-	Ok(Email {
-		senders,
-		recipients,
-		body,
-	})
+	let mut email = Email::default();
+	email.senders = senders;
+	email.recipients = recipients;
+	email.body = body;
+	Ok(email)
 }
 
 fn readline(stream: &mut TcpStream) -> io::Result<String> {
 	let mut line_buffer: Vec<u8> = vec![];
 	loop {
 		let mut read_buffer = [0; 256];
-		stream.peek(&mut read_buffer)?;
+		let bytes_read = stream.peek(&mut read_buffer)?;
+		if bytes_read == 0 {return Err(io::Error::from(ErrorKind::ConnectionReset))}
 		if let Some(line_length) = read_buffer
 			.iter()
 			.map(|c| char::from(*c))
