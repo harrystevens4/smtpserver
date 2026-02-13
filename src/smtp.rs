@@ -31,14 +31,19 @@ pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Er
 fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
 	//ack connection
 	connection.write(b"220 smtpserver\r\n")?;
-	//wait for greeting
-	let buffer = readline(connection)?;
-	//verify greeting
-	if !buffer.to_ascii_uppercase().starts_with("HELO"){
-		return Err(io::Error::other("malformed greeting in request"));
+	//3 attempts to send a valid handshake
+	for _ in 0..2 {
+		//wait for greeting
+		let buffer = readline(connection)?;
+		//verify greeting
+		if buffer.to_ascii_uppercase().starts_with("HELO"){
+			connection.write(b"250 Ok\r\n")?;
+			return Ok(());
+		}else {
+			connection.write(b"502 Unsupported\r\n")?;
+		}
 	}
-	connection.write(b"250 Ok\r\n")?;
-	Ok(())
+	Err(io::Error::other("malformed greeting in request"))
 }
 
 fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
