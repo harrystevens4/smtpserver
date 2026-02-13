@@ -19,6 +19,13 @@ impl MailDB {
 			body TEXT
 		)
 		",[])?;
+		//users table
+		db_connection.execute("
+		CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY,
+			name TEXT
+		)
+		",[])?;
 		//construct the db struct
 		Ok(MailDB {
 			db: db_connection,
