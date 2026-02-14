@@ -1,4 +1,4 @@
-use std::io;
+use std::{io,error};
 use std::net::TcpStream;
 use std::io::{Read,Write};
 use std::io::ErrorKind;
@@ -8,7 +8,11 @@ pub fn pop3_handshake(connection: &mut TcpStream) -> io::Result<()> {
 	Ok(())
 }
 
-pub fn pop3_authenticate<U: Fn(&str) -> bool, P: Fn(&str) -> bool>(connection: &mut TcpStream, verify_user: U, verify_pass: P) -> io::Result<()> {
+
+pub fn pop3_authenticate<
+	U: Fn(&str) -> Result<bool,Box<dyn error::Error>>,
+	P: Fn(&str,&str) -> Result<bool,Box<dyn error::Error>>
+>(connection: &mut TcpStream, verify_user: U, verify_pass: P) -> Result<(),Box<dyn error::Error>> {
 	loop {
 		let line = dbg!{readline(connection)}?;
 		let mut split_line = line.split(' ');
@@ -22,7 +26,7 @@ pub fn pop3_authenticate<U: Fn(&str) -> bool, P: Fn(&str) -> bool>(connection: &
 				"USER" => {
 					let user = split_line.next();
 					//verify user
-					if user.is_none() || !verify_user(&user.unwrap()){
+					if user.is_none() || !verify_user(&user.unwrap())?{
 						connection.write(b"-ERR Bad user\r\n")?;
 						continue;
 					}
@@ -30,8 +34,8 @@ pub fn pop3_authenticate<U: Fn(&str) -> bool, P: Fn(&str) -> bool>(connection: &
 					connection.write(b"+OK\r\n")?;
 					let line = dbg!{readline(connection)?};
 					let mut split_line = line.split(' ');
-					if split_line.next().map(|s| s.to_ascii_uppercase()) == Some("USER".to_string()) {
-						if let Some(password) = split_line.next() && verify_pass(password){
+					if split_line.next().map(|s| s.to_ascii_uppercase()) == Some("PASS".to_string()) {
+						if let Some(password) = split_line.next() && verify_pass(&user.unwrap(),password)?{
 							//verify password
 							connection.write(b"+OK\r\n")?;
 							continue;
@@ -41,13 +45,19 @@ pub fn pop3_authenticate<U: Fn(&str) -> bool, P: Fn(&str) -> bool>(connection: &
 				}
 				"QUIT" => {
 					connection.write(b"+OK\r\n")?;
-					return Err(io::Error::from(ErrorKind::ConnectionReset));
+					return Err(io::Error::from(ErrorKind::ConnectionReset))?;
 				}
 				_ => {
 					connection.write(b"+ERR Unknown command\r\n")?;
 				}
 			}
 		}
+	}
+}
+
+fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB) -> Result<(),Box<dyn Error>> {
+	loop {
+		let line = readline(connection);
 	}
 }
 
