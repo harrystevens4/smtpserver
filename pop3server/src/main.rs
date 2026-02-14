@@ -58,8 +58,12 @@ fn handle_connection(mut connection: TcpStream, mail_db: &MailDB) -> Result<(),B
 	pop3_handshake(&mut connection)?;
 	println!("authenticating...");
 	pop3_authenticate(&mut connection,
-		|_user| true,
-		|_password| true
+		|user|{
+			Ok(mail_db.check_user_exists(user)?)
+		},
+		|user,password|{
+			Ok(mail_db.verify_user_password(user,password)?)
+		}
 	)?;
 	Ok(())
 }

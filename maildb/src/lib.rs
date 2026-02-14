@@ -64,7 +64,8 @@ impl MailDB {
 		db_connection.execute("
 		CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY,
-			name TEXT
+			email_address TEXT,
+			password TEXT
 		)
 		",[])?;
 		//construct the db struct
@@ -83,5 +84,22 @@ impl MailDB {
 			email.body()
 		])?;
 		Ok(())
+	}
+	pub fn check_user_exists(&self, username: &str) -> Result<bool,sqlError> {
+		self.db.query_row("
+			SELECT 1
+			FROM users
+			WHERE email_address = ?
+		",[username], |row| row.get(0).map(bool::from))
+	}
+	pub fn verify_user_password(&self, username: &str, password: &str) -> Result<bool,sqlError> {
+		self.db.query_row("
+			SELECT password
+			FROM users
+			WHERE email_address = ?
+		",[username], |row|{
+			let retrieved_password: String = row.get(0)?;
+			Ok(sha256::digest(password) == retrieved_password)
+		})
 	}
 }

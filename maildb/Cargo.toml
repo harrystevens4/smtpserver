@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 rusqlite = "0.38.0"
+sha256 = "1.6.0"
