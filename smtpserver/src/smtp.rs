@@ -1,4 +1,4 @@
-use crate::email::Email;
+use maildb::Email;
 use std::net::{TcpStream,Shutdown};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};

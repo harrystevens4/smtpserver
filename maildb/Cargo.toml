@@ -1,9 +1,7 @@
 [package]
-name = "smtpserver"
+name = "maildb"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 rusqlite = "0.38.0"
-args = {path = "../args"}
-maildb = {path = "../maildb"}
