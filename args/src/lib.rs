@@ -54,4 +54,17 @@ impl Args {
 			others: other_args,
 		}
 	}
+	pub fn has(&self, short_option: char) -> bool {
+		self.options
+			.iter()
+			.find(|(short,_)| *short == short_option)
+			.is_some()
+	}
+	pub fn get_value(&self, short_option: char) -> Option<String> {
+		self.options
+			.iter()
+			.find(|(short,_)| *short == short_option)
+			.map(|(_,value)| value.clone())
+			.flatten()
+	}
 }

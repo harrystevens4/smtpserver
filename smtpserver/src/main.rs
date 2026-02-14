@@ -5,6 +5,7 @@ mod email;
 use crate::smtp::recieve_emails;
 use crate::maildb::MailDB;
 use args::Args;
+use std::env;
 
 use std::net::{TcpListener};
 use std::process::ExitCode;
@@ -15,10 +16,14 @@ fn main() -> ExitCode {
 		('h', Some("help"),    false),
 		('f', Some("db-path"), true ),
 	]);
-	println!("{cmd_args:?}");
+	if cmd_args.has('h'){
+		print_help();
+		return ExitCode::SUCCESS;
+	}
+	let db_path = cmd_args.get_value('f').unwrap_or(String::from("/var/mail/mail.db"));
 	//====== database ======
 	println!("Connecting to mail database...");
-	let mail_db = match MailDB::open("/var/mail/smtpserver.db"){
+	let mail_db = match MailDB::open(&db_path){
 		Ok(db) => db,
 		Err(err) => {
 			eprintln!("Could not open mail databse: {err}");
@@ -63,4 +68,12 @@ fn main() -> ExitCode {
 			};
 		}
 	}
+}
+
+fn print_help(){
+	let name = env::args().next().unwrap_or("smtpserver".to_string());
+	println!("Usage: {name} [options]");
+	println!("Options:");
+	println!("	-h, --help    : Show this help message");
+	println!("	-f, --db-path : Path of the mail database to use");
 }
