@@ -6,6 +6,7 @@ pub struct Email {
 	pub recipients: Vec<String>,
 	pub body: String,
 	pub timestamp: u64,
+	pub id: usize,
 }
 
 impl Default for Email {
@@ -19,6 +20,7 @@ impl Default for Email {
 			recipients: vec![],
 			body: String::new(),
 			timestamp,
+			id: 0,
 		}
 	}
 }
@@ -101,5 +103,28 @@ impl MailDB {
 			let retrieved_password: String = row.get(0)?;
 			Ok(sha256::digest(password) == retrieved_password)
 		})
+	}
+	pub fn retrieve_mail(&self, username: &str) -> Result<Vec<Email>,sqlError> {
+		let mut statement = self.db.prepare("
+			SELECT senders, recipients, body, receipt_timestamp, id
+			FROM emails
+		")?;
+		statement
+			.query_map([],|row|{
+				let mut email = Email::default();
+				email.senders = row.get::<_,String>(0)?
+					.split(';')
+					.map(String::from)
+					.collect();
+				email.recipients = row.get::<_,String>(1)?
+					.split(';')
+					.map(String::from)
+					.collect();
+				email.body = row.get(2)?;
+				email.timestamp = row.get::<_,i64>(3)? as u64;
+				email.id = row.get::<usize,i64>(4)? as usize;
+				Ok(email)
+			})?
+			.collect()
 	}
 }

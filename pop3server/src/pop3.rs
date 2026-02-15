@@ -2,6 +2,7 @@ use std::{io,error};
 use std::net::TcpStream;
 use std::io::{Read,Write};
 use std::io::ErrorKind;
+use maildb::MailDB;
 
 pub fn pop3_handshake(connection: &mut TcpStream) -> io::Result<()> {
 	connection.write(b"+OK ready\r\n")?;
@@ -14,7 +15,7 @@ pub fn pop3_authenticate<
 	P: Fn(&str,&str) -> Result<bool,Box<dyn error::Error>>
 >(connection: &mut TcpStream, verify_user: U, verify_pass: P) -> Result<(),Box<dyn error::Error>> {
 	loop {
-		let line = dbg!{readline(connection)}?;
+		let line = readline(connection)?;
 		let mut split_line = line.split(' ');
 		if let Some(command) = split_line.next(){
 			match command.to_ascii_uppercase().as_str(){
@@ -32,7 +33,7 @@ pub fn pop3_authenticate<
 					}
 					//fetch password
 					connection.write(b"+OK\r\n")?;
-					let line = dbg!{readline(connection)?};
+					let line = readline(connection)?;
 					let mut split_line = line.split(' ');
 					if split_line.next().map(|s| s.to_ascii_uppercase()) == Some("PASS".to_string()) {
 						if let Some(password) = split_line.next() && verify_pass(&user.unwrap(),password)?{
@@ -55,9 +56,23 @@ pub fn pop3_authenticate<
 	}
 }
 
-fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB) -> Result<(),Box<dyn Error>> {
+pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB) -> Result<(),Box<dyn error::Error>> {
+	//make an in memory copy of the user's mail
 	loop {
-		let line = readline(connection);
+		let line = dbg!{readline(connection)?};
+		let mut split_line = line.split(' ');
+		if let Some(command) = split_line.next(){
+			match command.to_ascii_uppercase().as_str(){
+				"STAT" => {
+					let maildrop = format!("+OK {} {}\r\n",1,2);
+					connection.write(&maildrop.into_bytes())?;
+				}
+				_ => {
+					connection.write(b"-ERR Unknown command\r\n");
+					continue
+				}
+			}
+		}
 	}
 }
 

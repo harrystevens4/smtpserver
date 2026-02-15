@@ -65,6 +65,8 @@ fn handle_connection(mut connection: TcpStream, mail_db: &MailDB) -> Result<(),B
 			Ok(mail_db.verify_user_password(user,password)?)
 		}
 	)?;
+	println!("processing transactions...");
+	pop3_process_transactions(&mut connection,&mail_db)?;
 	Ok(())
 }
 
