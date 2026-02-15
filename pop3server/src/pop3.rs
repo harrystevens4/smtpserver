@@ -61,6 +61,7 @@ pub fn pop3_authenticate<
 pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, user: &str) -> Result<(),Box<dyn error::Error>> {
 	//make an in memory copy of the user's mail
 	let maildrop = mail_db.retrieve_mail(user)?;
+	let mut emails_to_delete: Vec<usize> = vec![];
 	loop {
 		let line = dbg!{readline(connection)?};
 		let mut split_line = line.split(' ');
@@ -80,8 +81,8 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 							connection.write(b"-ERR Could not parse\r\n")?;
 							continue;
 						};
-						if let Some(email) = maildrop.iter().find(|m| m.id == mail_id){
-							let listing = format!("+OK {} {}\r\n",email.id,email.data().len());
+						if let Some(email) = maildrop.iter().find(|m| m.id() == mail_id){
+							let listing = format!("+OK {} {}\r\n",email.id(),email.data().len());
 							connection.write(&listing.into_bytes())?;
 						}else {
 							connection.write(b"-ERR Bad mail id\r\n")?;
@@ -92,13 +93,14 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 						connection.write(b"+OK\r\n")?;
 						for email in &maildrop {
 							let message_length = email.data.len();
-							let listing = format!("{} {}\r\n",email.id,message_length);
+							let listing = format!("{} {}\r\n",email.id(),message_length);
 							connection.write(&listing.into_bytes())?;
 						}
 						connection.write(b".\r\n")?;
 					}
 				},
 				"RETR" => {
+					//get mail to retrieve
 					let Some(arg) = split_line.next() else {
 						connection.write(b"-ERR No argument provided\r\n")?;
 						continue;
@@ -107,9 +109,11 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 						connection.write(b"-ERR Could not parse\r\n")?;
 						continue;
 					};
-					if let Some(email) = maildrop.iter().find(|m| m.id == mail_id){
+					//actualy fetch it
+					if let Some(email) = maildrop.iter().find(|m| m.id() == mail_id){
 						let listing = format!("+OK\r\n");
 						connection.write(&listing.into_bytes())?;
+						//mail is stored without trailing CRLF
 						let data = email.data() + "\r\n";
 						connection.write(&data.into_bytes())?;
 						connection.write(b".\r\n")?;
@@ -119,8 +123,34 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 						continue;
 					}
 				},
+				"DELE" => {
+					let Some(arg) = split_line.next() else {
+						connection.write(b"-ERR No argument provided\r\n")?;
+						continue;
+					};
+					let Ok(mail_id) = arg.parse() else {
+						connection.write(b"-ERR Could not parse\r\n")?;
+						continue;
+					};
+					emails_to_delete.push(mail_id);
+					connection.write(b"+OK\r\n")?;
+				},
+				"RSET" => {
+					emails_to_delete.clear();
+					connection.write(b"+OK\r\n")?;
+				}
 				"QUIT" => {
-					connection.write(b"+Ok\r\n")?;
+					//move to UPDATE state
+					//commit all the deleted messages
+					let result = emails_to_delete
+						.into_iter()
+						.try_for_each(|id| mail_db.delete_email(id));
+					if result.is_ok(){
+						connection.write(b"+OK\r\n")?;
+					}else {
+						connection.write(b"+ERR failed to delete some emails\r\n")?;
+						result?;
+					}
 					return Ok(());
 				},
 				_ => {

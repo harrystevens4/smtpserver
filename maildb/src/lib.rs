@@ -6,7 +6,7 @@ pub struct Email {
 	pub recipients: Vec<String>,
 	pub data: String,
 	pub timestamp: u64,
-	pub id: usize,
+	id: usize,
 }
 
 impl Default for Email {
@@ -28,6 +28,7 @@ impl Default for Email {
 impl Email {
 	pub fn timestamp(&self) -> u64 {self.timestamp}
 	pub fn data(&self) -> String {self.data.clone()}
+	pub fn id(&self) -> usize {self.id}
 	pub fn senders_string(&self) -> String {
 		self.senders
 			.clone()
@@ -126,5 +127,14 @@ impl MailDB {
 				Ok(email)
 			})?
 			.collect()
+	}
+	pub fn delete_email(&self, email_id: usize) -> Result<(),sqlError> {
+		self.db.execute("
+			DELETE FROM emails
+			WHERE id = ?
+		",params![
+			email_id as i64
+		])?;
+		Ok(())
 	}
 }
