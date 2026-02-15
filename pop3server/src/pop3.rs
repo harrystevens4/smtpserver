@@ -13,7 +13,7 @@ pub fn pop3_handshake(connection: &mut TcpStream) -> io::Result<()> {
 pub fn pop3_authenticate<
 	U: Fn(&str) -> Result<bool,Box<dyn error::Error>>,
 	P: Fn(&str,&str) -> Result<bool,Box<dyn error::Error>>
->(connection: &mut TcpStream, verify_user: U, verify_pass: P) -> Result<(),Box<dyn error::Error>> {
+>(connection: &mut TcpStream, verify_user: U, verify_pass: P) -> Result<String,Box<dyn error::Error>> {
 	loop {
 		let line = readline(connection)?;
 		let mut split_line = line.split(' ');
@@ -39,7 +39,9 @@ pub fn pop3_authenticate<
 						if let Some(password) = split_line.next() && verify_pass(&user.unwrap(),password)?{
 							//verify password
 							connection.write(b"+OK\r\n")?;
-							continue;
+							return Ok(user
+								.ok_or(io::Error::other("User undefined"))
+								.map(String::from)?);
 						}
 					}
 					connection.write(b"-ERR Bad password\r\n")?;
@@ -56,19 +58,49 @@ pub fn pop3_authenticate<
 	}
 }
 
-pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB) -> Result<(),Box<dyn error::Error>> {
+pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, user: &str) -> Result<(),Box<dyn error::Error>> {
 	//make an in memory copy of the user's mail
+	let maildrop = mail_db.retrieve_mail(user)?;
 	loop {
 		let line = dbg!{readline(connection)?};
 		let mut split_line = line.split(' ');
 		if let Some(command) = split_line.next(){
 			match command.to_ascii_uppercase().as_str(){
 				"STAT" => {
-					let maildrop = format!("+OK {} {}\r\n",1,2);
+					let maildrop = format!("+OK {} {}\r\n",maildrop.len(),1024);
 					connection.write(&maildrop.into_bytes())?;
+				},
+				"NOOP" => {
+					connection.write(b"+OK\r\n")?;
 				}
+				"LIST" => {
+					if let Some(arg) = split_line.next(){
+						//specific mail
+						let Ok(mail_id) = arg.parse() else {
+							connection.write(b"-ERR\r\n")?;
+							continue;
+						};
+						if let Some(email) = maildrop.iter().find(|m| m.id == mail_id){
+							let listing = format!("+OK {} {}\r\n",email.id,email.data.len());
+							connection.write(&listing.into_bytes())?;
+						}
+					}else{
+						//all mail
+						connection.write(b"+OK\r\n")?;
+						for email in &maildrop {
+							let message_length = email.data.len();
+							let listing = format!("{} {}\r\n",email.id,message_length);
+							connection.write(&listing.into_bytes())?;
+						}
+						connection.write(b".\r\n")?;
+					}
+				},
+				"QUIT" => {
+					connection.write(b"+Ok")?;
+					return Ok(());
+				},
 				_ => {
-					connection.write(b"-ERR Unknown command\r\n");
+					connection.write(b"-ERR Unknown command\r\n")?;
 					continue
 				}
 			}

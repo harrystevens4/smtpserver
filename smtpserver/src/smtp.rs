@@ -109,7 +109,7 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 	let mut email = Email::default();
 	email.senders = senders;
 	email.recipients = recipients;
-	email.body = body;
+	email.data = body;
 	Ok(email)
 }
 
