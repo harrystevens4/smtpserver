@@ -73,16 +73,19 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 				"NOOP" => {
 					connection.write(b"+OK\r\n")?;
 				}
-				"LIST" => {
+				"UIDL" | "LIST" => {
 					if let Some(arg) = split_line.next(){
 						//specific mail
 						let Ok(mail_id) = arg.parse() else {
-							connection.write(b"-ERR\r\n")?;
+							connection.write(b"-ERR Could not parse\r\n")?;
 							continue;
 						};
 						if let Some(email) = maildrop.iter().find(|m| m.id == mail_id){
-							let listing = format!("+OK {} {}\r\n",email.id,email.data.len());
+							let listing = format!("+OK {} {}\r\n",email.id,email.data().len());
 							connection.write(&listing.into_bytes())?;
+						}else {
+							connection.write(b"-ERR Bad mail id\r\n")?;
+							continue;
 						}
 					}else{
 						//all mail
@@ -95,8 +98,29 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 						connection.write(b".\r\n")?;
 					}
 				},
+				"RETR" => {
+					let Some(arg) = split_line.next() else {
+						connection.write(b"-ERR No argument provided\r\n")?;
+						continue;
+					};
+					let Ok(mail_id) = arg.parse() else {
+						connection.write(b"-ERR Could not parse\r\n")?;
+						continue;
+					};
+					if let Some(email) = maildrop.iter().find(|m| m.id == mail_id){
+						let listing = format!("+OK\r\n");
+						connection.write(&listing.into_bytes())?;
+						let data = email.data() + "\r\n";
+						connection.write(&data.into_bytes())?;
+						connection.write(b".\r\n")?;
+
+					}else {
+						connection.write(b"-ERR Bad mail id\r\n")?;
+						continue;
+					}
+				},
 				"QUIT" => {
-					connection.write(b"+Ok")?;
+					connection.write(b"+Ok\r\n")?;
 					return Ok(());
 				},
 				_ => {

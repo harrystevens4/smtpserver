@@ -4,7 +4,7 @@ use rusqlite::{Connection,Error as sqlError,params};
 pub struct Email {
 	pub senders: Vec<String>,
 	pub recipients: Vec<String>,
-	pub body: String,
+	pub data: String,
 	pub timestamp: u64,
 	pub id: usize,
 }
@@ -18,7 +18,7 @@ impl Default for Email {
 		Email {
 			senders: vec![],
 			recipients: vec![],
-			body: String::new(),
+			data: String::new(),
 			timestamp,
 			id: 0,
 		}
@@ -27,7 +27,7 @@ impl Default for Email {
 
 impl Email {
 	pub fn timestamp(&self) -> u64 {self.timestamp}
-	pub fn body(&self) -> String {self.body.clone()}
+	pub fn data(&self) -> String {self.data.clone()}
 	pub fn senders_string(&self) -> String {
 		self.senders
 			.clone()
@@ -59,7 +59,7 @@ impl MailDB {
 			receipt_timestamp INTEGER,
 			senders TEXT,
 			recipients TEXT,
-			body TEXT
+			data TEXT
 		)
 		",[])?;
 		//users table
@@ -77,13 +77,13 @@ impl MailDB {
 	}
 	pub fn store_email(&self, email: Email) -> Result<(),sqlError> {
 		self.db.execute("
-		INSERT INTO emails (receipt_timestamp, senders, recipients, body)
+		INSERT INTO emails (receipt_timestamp, senders, recipients, data)
 		VALUES (?, ?, ?, ?)
 		",params![
 			email.timestamp() as i64,
 			email.senders_string(),
 			email.recipients_string(),
-			email.body()
+			email.data()
 		])?;
 		Ok(())
 	}
@@ -106,7 +106,7 @@ impl MailDB {
 	}
 	pub fn retrieve_mail(&self, username: &str) -> Result<Vec<Email>,sqlError> {
 		let mut statement = self.db.prepare("
-			SELECT senders, recipients, body, receipt_timestamp, id
+			SELECT senders, recipients, data, receipt_timestamp, id
 			FROM emails
 		")?;
 		statement
@@ -120,7 +120,7 @@ impl MailDB {
 					.split(';')
 					.map(String::from)
 					.collect();
-				email.body = row.get(2)?;
+				email.data = row.get(2)?;
 				email.timestamp = row.get::<_,i64>(3)? as u64;
 				email.id = row.get::<usize,i64>(4)? as usize;
 				Ok(email)
