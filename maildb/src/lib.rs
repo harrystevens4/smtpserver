@@ -71,6 +71,20 @@ impl MailDB {
 			password TEXT
 		)
 		",[])?;
+		//received table (intermediate between users and emails)
+		db_connection.execute("
+		CREATE TABLE IF NOT EXISTS received (
+			email_id INTEGER,
+			user_id INTEGER,
+			FOREIGN KEY (email_id) REFERENCES emails (id)
+				ON DELETE CASCADE
+				ON UPDATE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users (id)
+				ON DELETE CASCADE
+				ON UPDATE CASCADE,
+			PRIMARY KEY (email_id,user_id)
+		)
+		",[])?;
 		//construct the db struct
 		Ok(MailDB {
 			db: db_connection,
