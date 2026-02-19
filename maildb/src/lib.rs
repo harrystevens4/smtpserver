@@ -29,6 +29,8 @@ impl Email {
 	pub fn timestamp(&self) -> u64 {self.timestamp}
 	pub fn data(&self) -> String {self.data.clone()}
 	pub fn id(&self) -> usize {self.id}
+	pub fn senders_vec(&self) -> Vec<String> {self.senders.clone()}
+	pub fn recipients_vec(&self) -> Vec<String> {self.recipients.clone()}
 	pub fn senders_string(&self) -> String {
 		self.senders
 			.clone()

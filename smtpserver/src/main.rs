@@ -1,6 +1,4 @@
-mod smtp;
-
-use crate::smtp::recieve_emails;
+use smtp::recieve_emails;
 use maildb::MailDB;
 use args::Args;
 use std::env;
