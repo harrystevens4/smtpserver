@@ -3,11 +3,13 @@ use maildb::Email;
 use std::time::{Instant};
 use std::convert;
 
+#[derive(Debug)]
 pub struct QueuedEmail {
 	email: Email,
 	time_added: Instant
 }
 
+#[derive(Debug)]
 pub struct EmailQueue {
 	queue: Vec<QueuedEmail>,
 }

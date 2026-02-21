@@ -1,7 +1,7 @@
 use std::time::{SystemTime,UNIX_EPOCH,Duration};
 use rusqlite::{Connection,Error as sqlError,params};
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct Email {
 	pub senders: Vec<String>,
 	pub recipients: Vec<String>,
