@@ -115,12 +115,12 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 
 pub fn send_emails(stream: &mut TcpStream, emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
 	//====== handshake ======
-	let mut line = dbg!{readline(stream)?};
+	let mut line = readline(stream)?;
 	if !line.starts_with("220"){
 		return Err(io::Error::other("failed smtp handshake"))?;
 	}
 	stream.write(b"HELO smtprelay\r\n")?;
-	line = dbg!{readline(stream)?};
+	line = readline(stream)?;
 	if !line.starts_with("250"){
 		return Err(io::Error::other("failed smtp handshake"))?;
 	}
@@ -128,43 +128,40 @@ pub fn send_emails(stream: &mut TcpStream, emails: Vec<Email>) -> Result<(),Box<
 	for email in emails {
 		//====== senders ======
 		for sender in email.senders_vec() {
-			let mail_from = dbg!{format!("MAIL FROM:<{}>\r\n",sender)};
+			let mail_from = format!("MAIL FROM:<{}>\r\n",sender);
 			stream.write(&mail_from.into_bytes())?;
-			line = dbg!{readline(stream)?};
+			line = readline(stream)?;
 			if !line.starts_with("250"){
 				return Err(io::Error::other(String::from("server error: ")+&line))?;
 			}
 		}
 		//====== recipients ======
 		for recipient in email.recipients_vec() {
-			let rcpt_to = dbg!{format!("RCPT TO:<{}>\r\n",recipient)};
+			let rcpt_to = format!("RCPT TO:<{}>\r\n",recipient);
 			stream.write(&rcpt_to.into_bytes())?;
-			line = dbg!{readline(stream)?};
+			line = readline(stream)?;
 			if !line.starts_with("250"){
 				return Err(io::Error::other(String::from("server error: ")+&line))?;
 			}
 		}
 		//====== data ======
 		stream.write(b"DATA\r\n")?;
-		line = dbg!{readline(stream)?};
+		line = readline(stream)?;
 		//wait for go ahead
 		if !line.starts_with("354"){
 			return Err(io::Error::other(String::from("server error: ")+&line))?;
 		}
 		stream.write(&email.data().into_bytes())?;
 		stream.write(b"\r\n.\r\n")?;
-		line = dbg!{readline(stream)?};
+		line = readline(stream)?;
 		if !line.starts_with("250"){
-			line += dbg!{&readline(stream)?};
-			line += dbg!{&readline(stream)?};
-			line += dbg!{&readline(stream)?};
 			return Err(io::Error::other(String::from("server error: ")+&line))?;
 		}
 	}
 	//====== quit ======
 	stream.write(b"QUIT\r\n")?;
-	line = dbg!{readline(stream)?};
-	if !line.starts_with("250"){
+	line = readline(stream)?;
+	if !line.starts_with("2"){
 		return Err(io::Error::other(String::from("server error: ")+&line))?;
 	}
 	Ok(())
