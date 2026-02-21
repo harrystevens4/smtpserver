@@ -1,0 +1,61 @@
+services:
+
+  inbound_smtpserver:
+    container_name: smtp_mailserver
+    restart: unless-stopped
+    ports:
+      - "25:25/tcp"
+    volumes:
+      - type: bind
+        source: /drives/d2p1/mail
+        target: /var/mail
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine:latest
+        RUN mkdir -p /var/mail
+        RUN apk add cargo sqlite-dev
+        COPY . .
+        WORKDIR /smtpserver/smtpserver
+        RUN cargo build --release
+        CMD ["/smtpserver/smtpserver/target/release/smtpserver","-f","/var/mail/inbound_mail.db"]
+
+  outbound_smtprelay:
+    container_name: smtprelay
+    restart: unless-stopped
+    ports:
+        - "9185:9185/tcp"
+    volumes:
+      - type: bind
+        source: /drives/d2p1/mail
+        target: /var/mail
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine:latest
+        RUN mkdir -p /var/mail
+        RUN apk add cargo sqlite-dev
+        COPY . .
+        WORKDIR /smtpserver/smtprelay
+        RUN cargo build --release
+        CMD ["/smtpserver/smtprelay/target/release/smtprelay"]
+
+  inbound_pop3server:
+    container_name: pop3_mailserver
+    restart: unless-stopped
+    ports:
+      - "110:110/tcp"
+    volumes:
+      - type: bind
+        source: /drives/d2p1/mail
+        target: /var/mail
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine:latest
+        RUN mkdir -p /var/mail
+        RUN apk add cargo sqlite-dev
+        COPY . .
+        WORKDIR /smtpserver/pop3server
+        RUN cargo build --release
+        CMD ["/smtpserver/pop3server/target/release/pop3server","-f","/var/mail/inbound_mail.db"]
