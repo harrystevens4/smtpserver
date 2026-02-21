@@ -2,11 +2,11 @@ use maildb::Email;
 mod emailqueue;
 
 use crate::emailqueue::EmailQueue;
-use smtp::{send_emails};
+use smtp::{send_emails,recieve_emails};
 
 use std::str::FromStr;
 use std::io;
-use std::net::{TcpStream};
+use std::net::{TcpStream,TcpListener};
 use std::process::ExitCode;
 use std::sync::{Arc,Mutex};
 use std::thread;
@@ -21,35 +21,72 @@ fn main() -> ExitCode {
 	//====== setup email queue ======
 	let email_queue = Arc::new(Mutex::new(EmailQueue::new()));
 	let email_queue_copy = email_queue.clone();
-	thread::spawn(move || process_queue(email_queue_copy));
-	let mut test_email = Email::default();
-	test_email.data = 
-"From: \"harry\" <harry@stevens-server.co.uk?\r\n\
-To: \"harry\" <derrickotron5000@gmail.com>\r\n\
-Message-id: <ABARACADABARA>\r\n\
-Subject: Yo chat\r\n\
-\r\n\
-hello chat\
-".into();
-	test_email.senders = vec!["harry@stevens-server.co.uk".into()];
-	test_email.recipients = vec!["derrickotron5000@gmail.com".into()];
-	{
-		let mut queue = email_queue.lock().unwrap();
-		queue.enqueue(test_email.into());
-	}
+	let processing_thread = thread::spawn(move || process_queue(email_queue_copy));
+//	let mut test_email = Email::default();
+//	test_email.data = 
+//"From: \"harry\" <harry@stevens-server.co.uk>\r\n\
+//To: \"harry\" <derrickotron5000@gmail.com>\r\n\
+//Message-id: <YOCHAT>\r\n\
+//Subject: Yo chat\r\n\
+//\r\n\
+//hello chat\
+//".into();
+//	test_email.senders = vec!["harry@stevens-server.co.uk".into()];
+//	test_email.recipients = vec!["derrickotron5000@gmail.com".into()];
+//	{
+//		let mut queue = email_queue.lock().unwrap();
+//		queue.enqueue(test_email.into());
+//	}
 	//====== listen for connections ======
+	let port = 9185;
+	let listener = match TcpListener::bind(("0.0.0.0",port)) {
+		Ok(l) => l, Err(e) => {
+			eprintln!("failed to bind to port {port}: {e}");
+			return ExitCode::FAILURE;
+		}
+	};
+	println!("listening on port {port}...");
 	loop {
+		//====== process connection ======
+		//ignore connection errors
+		let Ok((connection,address)) = listener.accept() else {continue};
+		println!("===> new outbound mail connection: {address}");
+		let emails = match recieve_emails(connection) {
+			Ok(emails) => emails,
+			Err(err) => {
+				eprintln!("error while receiving emails: {err}");
+				continue;
+			}
+		};
+		//====== queue new emails ======
+		{//<<< queue acquired >>>
+			let mut queue = email_queue.lock().unwrap();
+			for email in emails {
+				queue.enqueue(email.into());
+			}
+		}//<<< queue released >>>
+		println!("mail successfully queued");
+		//====== check on email processing thread ======
+		if processing_thread.is_finished(){
+			panic!("email processing thread terminated unexpectedly");
+		}
 	}
 }
 
 fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 	loop {
 		//====== acquire lock on queue ======
+		let mut processing_queue = EmailQueue::new();
 		{//<<< queue aquisition >>>
-		let mut queue = queue.lock().unwrap();
+			let mut queue = queue.lock().unwrap();
+			for _ in 0..((*queue).len()){
+				processing_queue.enqueue((*queue).dequeue())
+			}
+		}//<<< queue relinquished >>>
 		//====== attempt to send every email in the queue ======
-		for _ in 0..((*queue).len()){
-			let queued_email = queue.dequeue();
+		for _ in 0..((processing_queue).len()){
+			let queued_email = processing_queue.dequeue();
+			println!("sending email {queued_email:?}");
 			let email = queued_email.email();
 			//====== send email to each recipient ======
 			for recipient in email.recipients_vec(){
@@ -69,6 +106,7 @@ fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 				let mut connection = match TcpStream::connect((mx_record,25)){
 					Ok(c) => c, Err(e) => {
 						eprintln!("Error connecting: {e}");
+						eprintln!("reattempting later");
 						continue;
 					}
 				};
@@ -77,7 +115,6 @@ fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 					Err(e) => eprintln!("Error sending emails: {e}"),
 				}
 			}
-		}//<<< queue relinquished >>>
 		}
 		//wait 20 seconds between rounds of sending emails
 		thread::sleep(Duration::new(20,0));
