@@ -5,14 +5,17 @@ use crate::emailqueue::EmailQueue;
 use smtp::{send_emails};
 
 use std::str::FromStr;
+use std::io;
 use std::net::{TcpStream};
 use std::process::ExitCode;
 use std::sync::{Arc,Mutex};
 use std::thread;
 use std::time::{Duration};
+use std::error::Error;
 use domain::resolv::stub::StubResolver;
 use domain::base::iana::{Rtype};
 use domain::base::name::Name;
+use domain::rdata::rfc1035::Mx;
 
 fn main() -> ExitCode {
 	//====== setup email queue ======
@@ -22,14 +25,14 @@ fn main() -> ExitCode {
 	let mut test_email = Email::default();
 	test_email.data = 
 "From: \"harry\" <harry@stevens-server.co.uk?\r\n\
-To: \"harry\" <harry@derrickotron5000@gmail.com>\r\n\
+To: \"harry\" <derrickotron5000@gmail.com>\r\n\
 Message-id: <ABARACADABARA>\r\n\
 Subject: Yo chat\r\n\
 \r\n\
 hello chat\
 ".into();
 	test_email.senders = vec!["harry@stevens-server.co.uk".into()];
-	test_email.recipients = vec!["harry@derrickotron5000@gmail.com".into()];
+	test_email.recipients = vec!["derrickotron5000@gmail.com".into()];
 	{
 		let mut queue = email_queue.lock().unwrap();
 		queue.enqueue(test_email.into());
@@ -51,7 +54,18 @@ fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 			//====== send email to each recipient ======
 			for recipient in email.recipients_vec(){
 				//====== query mx record for recipient ======
-				println!("{mx_record:?}");
+				let mut mx_records = match fetch_email_mx_records(&recipient){
+					Ok(r) => r, Err(e) => {
+						eprintln!("Error fetching mx records for {recipient}: {e}");
+						continue;
+					}
+				};
+				//use highest priority mx record
+				let Some(mx_record) = mx_records.pop() else {
+					eprintln!("No mx records found for domain {recipient}");
+					continue;
+				};
+				//====== connect to recipient relay ======
 				let mut connection = match TcpStream::connect((mx_record,25)){
 					Ok(c) => c, Err(e) => {
 						eprintln!("Error connecting: {e}");
@@ -71,29 +85,29 @@ fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 }
 
 fn fetch_email_mx_records(email_address: &str) -> Result<Vec<String>,Box<dyn Error>> {
-	let Some(Ok(domain)): Option<Result<Name<Vec<u8>>,_>> = email_address
+	let domain: Name<Vec<u8>> = Name::from_str(email_address
 		.split_once("@")
-		.map(|(_,d)| d)
-		.map(|d: &str| Name::from_str(d))
-	else{
-		eprintln!("Error sending email to {recipient}: bad domain - ignoring");
-		return Err()?
-	};
+		.ok_or(io::Error::other("Invalid email address"))
+		.map(|(_,d)| d)?)?;
 	let domain_clone = domain.clone(); //domain moved into closure but also required for printing errors
 	let result = StubResolver::run(
 		move |resolver: StubResolver| async move {
 			resolver.query((domain_clone,Rtype::MX)).await
 		}
-	);
-	let mut mx_record = match result {
-		Ok(answer) => String::from_utf8_lossy(answer
-			.answer()
-			.(|.next()
-			.unwrap_or("")
-		).into_owned(),
-		Err(e) => {
-			eprintln!("Error fetching mx record for {domain}: {e}");
-			continue;
-		}
-	};
+	)?;
+	let mut records: Vec<_> = result
+		.answer()?
+		//extract pure mx records
+		.limit_to::<Mx<_>>()
+		.filter_map(|r| if let Ok(mx) = r {Some(mx.into_data())} else {None})
+		//map to tuple (priority,exchange)
+		.map(|r| (r.preference(),r.exchange().to_string()))
+		.collect();
+	//order by priority (low priority number = lower index)
+	records.sort_by(|(priority1,_),(priority2,_)| priority2.cmp(priority1));
+	//discard the priority
+	Ok(records
+		.into_iter()
+		.map(|(_,exchange)| exchange)
+		.collect())
 }
