@@ -3,6 +3,7 @@ mod emailqueue;
 
 use crate::emailqueue::EmailQueue;
 use smtp::{send_emails,recieve_emails};
+use args::Args;
 
 use std::str::FromStr;
 use std::io;
@@ -18,27 +19,40 @@ use domain::base::name::Name;
 use domain::rdata::rfc1035::Mx;
 
 fn main() -> ExitCode {
+	//====== process command line arguments ======
+	let args = Args::gather(&[
+		('h', Some("help"),    false ),
+		('p', Some("port"),    true  ),
+		('f', Some("db-path"), true  ),
+	]);
+	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(9185);
+	let db_path = args.get_value('f').unwrap_or(String::from("queue.db"));
 	//====== setup email queue ======
-	let email_queue = Arc::new(Mutex::new(EmailQueue::new()));
-	let email_queue_copy = email_queue.clone();
-	let processing_thread = thread::spawn(move || process_queue(email_queue_copy));
-//	let mut test_email = Email::default();
-//	test_email.data = 
-//"From: \"harry\" <harry@stevens-server.co.uk>\r\n\
-//To: \"harry\" <derrickotron5000@gmail.com>\r\n\
-//Message-id: <YOCHAT>\r\n\
-//Subject: Yo chat\r\n\
-//\r\n\
-//hello chat\
-//".into();
-//	test_email.senders = vec!["harry@stevens-server.co.uk".into()];
-//	test_email.recipients = vec!["derrickotron5000@gmail.com".into()];
-//	{
-//		let mut queue = email_queue.lock().unwrap();
-//		queue.enqueue(test_email.into());
-//	}
+	let raw_queue = match EmailQueue::new(db_path){
+		Ok(q) => q,
+		Err(e) => {
+			eprintln!("Error initialising email queue database: {e}");
+			return ExitCode::FAILURE;
+		}
+	};
+	//====== choose whether to receive or send emails ======
+	let mode = args.others().into_iter().map(|o| o.as_str()).next();
+	match mode {
+		Some("listen") => relay_recv(raw_queue,port),
+		Some("send") => ExitCode::SUCCESS,
+		Some(_) => {
+			eprintln!("Unrecognised mode.");
+			ExitCode::FAILURE
+		}
+		None => {
+			eprintln!("Please specify mode.");
+			ExitCode::FAILURE
+		}
+	}
+}
+
+fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
 	//====== listen for connections ======
-	let port = 9185;
 	let listener = match TcpListener::bind(("0.0.0.0",port)) {
 		Ok(l) => l, Err(e) => {
 			eprintln!("failed to bind to port {port}: {e}");
@@ -59,20 +73,20 @@ fn main() -> ExitCode {
 			}
 		};
 		//====== queue new emails ======
-		{//<<< queue acquired >>>
-			let mut queue = email_queue.lock().unwrap();
-			for email in emails {
-				queue.enqueue(email.into());
+		for email in emails {
+			match queue.enqueue(email){
+				Ok(_) => (),
+				Err(e) => {
+					eprintln!("Error enqueueing email: {e}");
+					continue;
+				}
 			}
-		}//<<< queue released >>>
-		println!("mail successfully queued");
-		//====== check on email processing thread ======
-		if processing_thread.is_finished(){
-			panic!("email processing thread terminated unexpectedly");
 		}
+		println!("mail successfully queued");
 	}
 }
 
+/*
 fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 	loop {
 		//====== acquire lock on queue ======
@@ -120,6 +134,7 @@ fn process_queue(queue: Arc<Mutex<EmailQueue>>){
 		thread::sleep(Duration::new(20,0));
 	}
 }
+*/
 
 fn fetch_email_mx_records(email_address: &str) -> Result<Vec<String>,Box<dyn Error>> {
 	let domain: Name<Vec<u8>> = Name::from_str(email_address

@@ -3,14 +3,15 @@ use maildb::Email;
 use std::time::{Instant,SystemTime,UNIX_EPOCH};
 use std::convert::{From,Into};
 use std::path::Path;
-use rustqlite::{Connection,params,Error as SQLError}
+use rusqlite::{Connection,params,Error as SQLError,OptionalExtension};
 use std::error::Error;
+use std::io;
 
 #[derive(Debug)]
 pub struct QueuedEmail {
 	email: Email,
 	time_added: Instant,
-	id: i64,
+	id: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -20,7 +21,7 @@ pub struct EmailQueue {
 }
 
 impl EmailQueue {
-	pub fn new<P: AsRef<&Path>>(db_path: P) -> Result<Self,SQLError> {
+	pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self,SQLError> {
 		//====== connect to the database ======
 		let database = Connection::open(db_path.as_ref())?;
 		//====== create relevant tables ======
@@ -33,7 +34,7 @@ impl EmailQueue {
 			CREATE TABLE IF NOT EXISTS emails (
 				id INTEGER PRIMARY KEY,
 				senders TEXT,
-				data TEXT,
+				data TEXT
 			)
 		",[])?;
 		//one email may have many recipients, so reuse the email
@@ -42,58 +43,90 @@ impl EmailQueue {
 				recipient TEXT PRIMARY KEY,
 				email_id INTEGER,
 				time_added INTEGER,
+				attempts INTEGER,
 				FOREIGN KEY (email_id) REFERENCES emails (id)
 					ON UPDATE CASCADE
 					ON DELETE RESTRICT
 			)
 		",[])?;
 		//====== init the struct ======
-		EmailQueue {
+		Ok(EmailQueue {
 			queue: vec![],
 			database,
-		}
+		})
 	}
-	pub fn enqueue<E: Into<QueuedEmail>>(&mut self, email: E) -> Result<(),Box<dyn Error>>{
-		let queued_email = email.into<QueuedEmail>();
+	pub fn enqueue<E: Into<QueuedEmail>>(&self, email: E) -> Result<(),Box<dyn Error>>{
+		let queued_email = email.into();
 		let email = queued_email.email();
 		//add email to database
 		self.database.execute("
 			INSERT INTO emails (senders,data)
 			VALUES (?,?)
 		",[email.senders_string(),email.data()])?;
-		email_id = database.last_insert_rowid();
+		let email_id = self.database.last_insert_rowid();
 		//add each recipient to queue
-		for recipient in recipients_vec {
+		for recipient in email.recipients_vec() {
 			self.database.execute("
 				INSERT INTO recipient_queue (recipient,email_id,time_added)
 				VALUES (?,?,?)
-			",[
+			",params![
 				recipient,
 				email_id,
-				SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+				SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64,
 			])?;
 		}
+		Ok(())
 	}
-	pub fn peek(&mut self) -> Option<QueuedEmail> {
-		//====== fetch oldest in queue ======
-		let (email_id,recipient,time_added): (i64,String,i64) = self.database.query_one("
+	pub fn peek(&self) -> Result<Option<QueuedEmail>,SQLError> {
+		//====== fetch lowest attempts in queue ======
+		//by fetching lowest attempts, it will make sure to evenly 
+		//select not only the first in the queue but messages that havent
+		//been attempted yet
+		let Some((email_id,recipient,time_added)): Option<(i64,String,i64)> = self.database.query_row("
 			SELECT email_id,recipient,time_added
 			FROM recipient_queue
-			ORDER BY time_added ASC
+			ORDER BY attempts ASC
 			LIMIT 1
-		",[],|row| (row.get(0)?,row.get(1)?,row.get(2)?));
+		",[],|row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?
+		else {
+			//nothing left in the queue
+			return Ok(None)
+		};
 		//====== fetch corresponding email ======
-		let (senders,data) = self.database.query_one("
+		let (senders,data): (String,String) = self.database.query_one("
 			SELECT senders,data
 			FROM emails
 			WHERE id = ?
-		",[email_id])
+		",[email_id],|row| Ok((row.get(0)?,row.get(1)?)))?;
+		let senders_vec = senders
+			.trim_end_matches(';')
+			.split(';')
+			.into_iter()
+			.map(String::from)
+			.collect();
 		//====== construct QueuedEmail ======
-		let email = Email::new(senders,vec![recipient],data);
-		let queued_email = QueuedEmail::new();
+		let email = Email::new(senders_vec,vec![recipient],data);
+		let mut queued_email = QueuedEmail::from(email);
+		queued_email.id = Some(email_id);
+		Ok(Some(queued_email))
 	}
-	pub fn delete(&mut self, email: QueuedEmail) -> QueuedEmail {
-		let id = email.id();
+	pub fn retry_later(&self, email: QueuedEmail) -> Result<(),Box<dyn Error>>{
+		//check email has valid id
+		let Some(id) = email.id() else {
+			return Err(io::Error::other("QueuedEmail does not originate from queue"))?
+		};
+		//increment attempts
+		self.database.execute("
+			UPDATE recipient_queue
+			SET attempts = attempts + 1
+			WHERE id = ?
+		",[id])?;
+		Ok(())
+	}
+	pub fn delete(&self, email: QueuedEmail) -> Result<(),Box<dyn Error>>{
+		let Some(id) = email.id() else {
+			return Err(io::Error::other("QueuedEmail does not originate from queue"))?
+		};
 		//====== delete recipient from queue ======
 		self.database.execute("
 			DELETE FROM recipient_queue
@@ -105,16 +138,21 @@ impl EmailQueue {
 			DELETE FROM emails
 			WHERE id = ?
 		",[id]);
+		Ok(())
 	}
 }
 
 impl QueuedEmail {
-	pub fn new(email: Email, time_added: Instant, id: i64) -> Self { QueuedEmail {email,time_added,id} }
+	pub fn new(email: Email, time_added: Instant) -> Self { 
+		QueuedEmail {
+			email,time_added,id: None
+		}
+	}
 	pub fn email<'a>(&'a self) -> &'a Email {&self.email}
-	pub fn id(&self) -> i64 {self.id};
+	pub fn id(&self) -> Option<i64> {self.id}
 }
 impl From<Email> for QueuedEmail {
 	fn from(email: Email) -> Self {
-		QueuedEmail {email, time_added: Instant::now(), id: 0}
+		QueuedEmail {email, time_added: Instant::now(), id: None}
 	}
 }
