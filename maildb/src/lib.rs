@@ -3,10 +3,10 @@ use rusqlite::{Connection,Error as sqlError,params};
 
 #[derive(Clone,Debug)]
 pub struct Email {
-	pub senders: Vec<String>,
-	pub recipients: Vec<String>,
-	pub data: String,
-	pub timestamp: u64,
+	senders: Vec<String>,
+	recipients: Vec<String>,
+	data: String,
+	timestamp: u64,
 	id: usize,
 }
 
@@ -46,6 +46,16 @@ impl Email {
 			.map(|recipient| recipient + ";") //semi colon seperated recipients
 			.fold(String::new(),|recipients,recipient| recipients + &recipient)
 	}
+	pub fn new(senders: Vec<String>, recipients: Vec<String>, data: String) -> Self { Email {
+		senders,
+		recipients,
+		data,
+		id: 0,
+		timestamp: SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.unwrap_or(Duration::default())
+			.as_secs()
+	}}
 }
 
 pub struct MailDB {

@@ -106,10 +106,7 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 		}
 	}
 	//====== construct the new email ======
-	let mut email = Email::default();
-	email.senders = senders;
-	email.recipients = recipients;
-	email.data = body;
+	let mut email = Email::new(senders,recipients,body);
 	Ok(email)
 }
 
