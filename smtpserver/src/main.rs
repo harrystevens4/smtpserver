@@ -55,9 +55,9 @@ fn main() -> ExitCode {
 		};
 		for email in emails {
 			println!("====== new email ======");
-			println!("===> Senders: {:?}",email.senders);
-			println!("===> Recipients: {:?}",email.recipients);
-			println!("{}",email.data);
+			println!("===> Senders: {:?}",email.senders_vec());
+			println!("===> Recipients: {:?}",email.recipients_vec());
+			println!("{}",email.data());
 			//store the email in the databse
 			if let Err(e) = mail_db.store_email(email){
 				eprintln!("Error storing mail: {e}");

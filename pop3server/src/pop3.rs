@@ -92,7 +92,7 @@ pub fn pop3_process_transactions(connection: &mut TcpStream, mail_db: &MailDB, u
 						//all mail
 						connection.write(b"+OK\r\n")?;
 						for email in &maildrop {
-							let message_length = email.data.len();
+							let message_length = email.data().len();
 							let listing = format!("{} {}\r\n",email.id(),message_length);
 							connection.write(&listing.into_bytes())?;
 						}
