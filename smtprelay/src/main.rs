@@ -125,6 +125,7 @@ fn relay_send(queue: EmailQueue) -> ExitCode {
 		if let Err(e) = queue.delete(queued_email){
 			eprintln!("Error deleting queued email: {e}");
 		}
+		println!("email sent");
 	}
 }
 
@@ -150,16 +151,18 @@ fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
 			}
 		};
 		//====== queue new emails ======
+		let mut errors = false;
 		for email in emails {
 			match queue.enqueue(email){
 				Ok(_) => (),
 				Err(e) => {
 					eprintln!("Error enqueueing email: {e}");
+					errors = true;
 					continue;
 				}
 			}
 		}
-		println!("mail successfully queued");
+		if errors != true {println!("mail successfully queued");}
 	}
 }
 

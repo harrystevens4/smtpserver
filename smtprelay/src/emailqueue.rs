@@ -6,6 +6,7 @@ use std::path::Path;
 use rusqlite::{Connection,params,Error as SQLError,OptionalExtension};
 use std::error::Error;
 use std::io;
+use std::ops::Drop;
 
 #[derive(Debug)]
 pub struct QueuedEmail {
@@ -40,7 +41,8 @@ impl EmailQueue {
 		//one email may have many recipients, so reuse the email
 		database.execute("
 			CREATE TABLE IF NOT EXISTS recipient_queue (
-				recipient TEXT PRIMARY KEY,
+				queue_id INTEGER PRIMARY KEY,
+				recipient TEXT,
 				email_id INTEGER,
 				time_added INTEGER,
 				attempts INTEGER,
