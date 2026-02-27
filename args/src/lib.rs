@@ -67,4 +67,7 @@ impl Args {
 			.map(|(_,value)| value.clone())
 			.flatten()
 	}
+	pub fn others<'a>(&'a self) -> &'a Vec<String> {
+		&self.others
+	}
 }
