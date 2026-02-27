@@ -6,7 +6,6 @@ use std::path::Path;
 use rusqlite::{Connection,params,Error as SQLError,OptionalExtension};
 use std::error::Error;
 use std::io;
-use std::ops::Drop;
 
 #[derive(Debug)]
 pub struct QueuedEmail {
@@ -17,7 +16,6 @@ pub struct QueuedEmail {
 
 #[derive(Debug)]
 pub struct EmailQueue {
-	queue: Vec<QueuedEmail>,
 	database: Connection,
 }
 
@@ -55,7 +53,6 @@ impl EmailQueue {
 		database.execute("PRAGMA foreign_keys = ON",[])?;
 		//====== init the struct ======
 		Ok(EmailQueue {
-			queue: vec![],
 			database,
 		})
 	}

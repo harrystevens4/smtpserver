@@ -9,7 +9,6 @@ use std::str::FromStr;
 use std::io;
 use std::net::{TcpStream,TcpListener};
 use std::process::ExitCode;
-use std::sync::{Arc,Mutex};
 use std::thread;
 use std::time::{Duration};
 use std::error::Error;
@@ -26,7 +25,7 @@ fn main() -> ExitCode {
 		('f', Some("db-path"), true  ),
 	]);
 	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(9185);
-	let db_path = args.get_value('f').unwrap_or(String::from("queue.db"));
+	let db_path = args.get_value('f').unwrap_or(String::from("/var/mail/outbound_queue.db"));
 	//====== setup email queue ======
 	let raw_queue = match EmailQueue::new(db_path){
 		Ok(q) => q,
