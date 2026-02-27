@@ -68,8 +68,8 @@ impl EmailQueue {
 		//add each recipient to queue
 		for recipient in email.recipients_vec() {
 			self.database.execute("
-				INSERT INTO recipient_queue (recipient,email_id,time_added)
-				VALUES (?,?,?)
+				INSERT INTO recipient_queue (recipient,email_id,time_added,attempts)
+				VALUES (?,?,?,0)
 			",params![
 				recipient,
 				email_id,
