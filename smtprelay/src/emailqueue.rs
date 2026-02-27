@@ -49,6 +49,8 @@ impl EmailQueue {
 					ON DELETE RESTRICT
 			)
 		",[])?;
+		//===== enable foreign key constraints ======
+		database.execute("PRAGMA foreign_keys = ON",[])?;
 		//====== init the struct ======
 		Ok(EmailQueue {
 			queue: vec![],
@@ -119,7 +121,7 @@ impl EmailQueue {
 		self.database.execute("
 			UPDATE recipient_queue
 			SET attempts = attempts + 1
-			WHERE id = ?
+			WHERE recipient = ?
 		",[id])?;
 		Ok(())
 	}
@@ -127,11 +129,14 @@ impl EmailQueue {
 		let Some(id) = email.id() else {
 			return Err(io::Error::other("QueuedEmail does not originate from queue"))?
 		};
+		let Some(recipient) = email.email().recipients_vec().pop() else {
+			return Err(io::Error::other("Email has no recipients"))?;
+		};
 		//====== delete recipient from queue ======
 		self.database.execute("
 			DELETE FROM recipient_queue
-			WHERE id = ?
-		",[id])?;
+			WHERE recipient = ?
+		",[recipient])?;
 		//====== attempt to delete email ======
 		//will fail if there are still recipients in queue with this email
 		let _ = self.database.execute("

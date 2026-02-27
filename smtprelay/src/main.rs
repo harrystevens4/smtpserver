@@ -39,7 +39,7 @@ fn main() -> ExitCode {
 	let mode = args.others().into_iter().map(|o| o.as_str()).next();
 	match mode {
 		Some("listen") => relay_recv(raw_queue,port),
-		Some("send") => ExitCode::SUCCESS,
+		Some("send") => relay_send(raw_queue),
 		Some(_) => {
 			eprintln!("Unrecognised mode.");
 			ExitCode::FAILURE
@@ -47,6 +47,83 @@ fn main() -> ExitCode {
 		None => {
 			eprintln!("Please specify mode.");
 			ExitCode::FAILURE
+		}
+	}
+}
+
+fn relay_send(queue: EmailQueue) -> ExitCode {
+	loop {
+		//====== attempt to send next email in queue ======
+		let queued_email = match queue.peek(){
+			Ok(Some(email)) => email,
+			Ok(None) => {
+				//wait 1 second between checking
+				thread::sleep(Duration::new(1,0));
+				continue;
+			}
+			Err(e) => {
+				eprintln!("Error fetching email from queue: {e}");
+				return ExitCode::FAILURE;
+			}
+		};
+		let email = queued_email.email();
+		println!("sending email to {:?}",email.recipients_vec());
+		//====== send email to each recipient ======
+		//the same email is split into seperate items in the queue for each recipient
+		//so it is guaranteed to only have one recipient
+		let Some(recipient) = email.recipients_vec().pop()
+		else {
+			eprintln!("email has no recipients - discarding");
+			if let Err(e) = queue.delete(queued_email){
+				eprintln!("Error deleting queued email: {e}")
+			};
+			continue;
+		};
+		//====== query mx record for recipient ======
+		let mut mx_records = match fetch_email_mx_records(&recipient){
+			Ok(r) => r, Err(e) => {
+				eprintln!("Error fetching mx records for {recipient} - discarding: {e}");
+				//permanent failure
+				if let Err(e) = queue.delete(queued_email){
+					eprintln!("Error deleting queued email: {e}");
+				};
+				continue;
+			}
+		};
+		//use highest priority mx record
+		let Some(mx_record) = mx_records.pop() else {
+			eprintln!("No mx records found for domain {recipient} - discarding");
+			//permanent failure
+			if let Err(e) = queue.delete(queued_email){
+				eprintln!("Error deleting queued email: {e}");
+			};
+			continue;
+		};
+		//====== connect to recipient relay ======
+		let mut connection = match TcpStream::connect((mx_record,25)){
+			Ok(c) => c, Err(e) => {
+				eprintln!("Error connecting: {e} - postponing");
+				//temporary failure
+				if let Err(e) = queue.retry_later(queued_email){
+					eprintln!("Error postponing queued email: {e}");
+				};
+				continue;
+			}
+		};
+		match send_emails(&mut connection,vec![email.clone()]){
+			Ok(_) => (),
+			Err(e) => {
+				eprintln!("Error sending emails: {e}");
+				//temporary failure
+				if let Err(e) = queue.retry_later(queued_email){
+					eprintln!("Error postponing queued email: {e}");
+				};
+				continue;
+			}
+		}
+		//successfuly sent
+		if let Err(e) = queue.delete(queued_email){
+			eprintln!("Error deleting queued email: {e}");
 		}
 	}
 }
@@ -85,56 +162,6 @@ fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
 		println!("mail successfully queued");
 	}
 }
-
-/*
-fn process_queue(queue: Arc<Mutex<EmailQueue>>){
-	loop {
-		//====== acquire lock on queue ======
-		let mut processing_queue = EmailQueue::new();
-		{//<<< queue aquisition >>>
-			let mut queue = queue.lock().unwrap();
-			for _ in 0..((*queue).len()){
-				processing_queue.enqueue((*queue).dequeue())
-			}
-		}//<<< queue relinquished >>>
-		//====== attempt to send every email in the queue ======
-		for _ in 0..((processing_queue).len()){
-			let queued_email = processing_queue.dequeue();
-			println!("sending email {queued_email:?}");
-			let email = queued_email.email();
-			//====== send email to each recipient ======
-			for recipient in email.recipients_vec(){
-				//====== query mx record for recipient ======
-				let mut mx_records = match fetch_email_mx_records(&recipient){
-					Ok(r) => r, Err(e) => {
-						eprintln!("Error fetching mx records for {recipient}: {e}");
-						continue;
-					}
-				};
-				//use highest priority mx record
-				let Some(mx_record) = mx_records.pop() else {
-					eprintln!("No mx records found for domain {recipient}");
-					continue;
-				};
-				//====== connect to recipient relay ======
-				let mut connection = match TcpStream::connect((mx_record,25)){
-					Ok(c) => c, Err(e) => {
-						eprintln!("Error connecting: {e}");
-						eprintln!("reattempting later");
-						continue;
-					}
-				};
-				match send_emails(&mut connection,vec![email.clone()]){
-					Ok(_) => (),
-					Err(e) => eprintln!("Error sending emails: {e}"),
-				}
-			}
-		}
-		//wait 20 seconds between rounds of sending emails
-		thread::sleep(Duration::new(20,0));
-	}
-}
-*/
 
 fn fetch_email_mx_records(email_address: &str) -> Result<Vec<String>,Box<dyn Error>> {
 	let domain: Name<Vec<u8>> = Name::from_str(email_address
