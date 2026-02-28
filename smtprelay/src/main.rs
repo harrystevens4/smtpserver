@@ -31,6 +31,10 @@ fn main() -> ExitCode {
 		('f', Some("db-path"),      true  ),
 		('r', Some("retry-window"), true  ),
 	]);
+	if args.has('h') {
+		print_help();
+		return ExitCode::SUCCESS
+	}
 	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(9185);
 	let db_path = args.get_value('f').unwrap_or(String::from("/var/mail/outbound_queue.db"));
 	//24 hours
@@ -60,6 +64,19 @@ fn main() -> ExitCode {
 	}
 }
 
+fn print_help(){
+	use std::env;
+	let name = env::args().next().unwrap_or("smtprelay".into());
+	println!("Usage: {name} <listen|send> [options]");
+	println!("Operates in 2 modes. listen accepts emails and send relays them to their destination.");
+	println!("Requires both for full relay functionality (spawn as seperate processes)");
+	println!("Options:");
+	println!("	-h, --help         : Print this text");
+	println!("	-p, --port         : Port to listen on. Only works in listen mode");
+	println!("	-f, --db-path      : Path for the queue database. Seperate db to the smtpserver.");
+	println!("	-r, --retry-window : The number of seconds to keep attempting to send an email for.");
+
+}
 fn relay_send(queue: EmailQueue, retry_window: Duration) -> ExitCode {
 	loop {
 		//====== attempt to send next email in queue ======
@@ -198,3 +215,4 @@ fn fetch_email_mx_records(email_address: &str) -> Result<Vec<String>,Box<dyn Err
 		.map(|(_,exchange)| exchange)
 		.collect())
 }
+
