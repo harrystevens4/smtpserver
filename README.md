@@ -9,6 +9,7 @@ What it is, however is small, local and modular, meaning you just set up the ser
 ## Manual
 
 You can run `smtpserver` and `pop3server` manually if you like, but they will require root as they bind to low port numbers.
+For `smtprelay`, you will need to run `smtprelay listen` and `smtprelay send` as seperate processes.
 
 ## Docker compose
 
@@ -32,16 +33,5 @@ pop3server is a server for accessing mail stored by the smtpserver program. It p
 
 # smtprelay
 
-smtprelay is a relay server that accepts outbound mail on port 9185 and forwards it to the correct destination.
+smtprelay is a relay server that accepts outbound mail on port `9185` and forwards it to the correct destination. It operates in 2 different modes, with a listen and a send mode. When in listening mode, it will recieve emails on port `9185` and queue them at `/var/mail/outbound_queue.db`. when operating in send mode, it attempts to send all the queued emails stored in the database, and delete them once they have been delivered. For running it, you will need to run 2 processes with one running `smtprelay listen` and one running `smtprelay send`.
 
-## Options
-
-### smtpserver
-
- - `-h`, `--help` display help
- - `-f <path>`, `--db-path <path>` set the path of the database to use (defaults to /var/mail/mail.db)
-
-### pop3server
-
- - `-h`, `--help` display help
- - `-f <path>`, `--db-path <path>` set the path of the database to use (defaults to /var/mail/mail.db)
