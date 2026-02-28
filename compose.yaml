@@ -20,8 +20,8 @@ services:
         RUN cargo build --release
         CMD ["/smtpserver/smtpserver/target/release/smtpserver","-f","/var/mail/inbound_mail.db"]
 
-  outbound_smtprelay:
-    container_name: smtprelay
+  inbound_smtprelay:
+    container_name: inbound_smtprelay
     restart: unless-stopped
     ports:
         - "9185:9185/tcp"
@@ -38,7 +38,25 @@ services:
         COPY . .
         WORKDIR /smtpserver/smtprelay
         RUN cargo build --release
-        CMD ["/smtpserver/smtprelay/target/release/smtprelay"]
+        CMD ["/smtpserver/smtprelay/target/release/smtprelay","listen"]
+
+  outbound_smtprelay:
+    container_name: outbound_smtprelay
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /drives/d2p1/mail
+        target: /var/mail
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine:latest
+        RUN mkdir -p /var/mail
+        RUN apk add cargo sqlite-dev
+        COPY . .
+        WORKDIR /smtpserver/smtprelay
+        RUN cargo build --release
+        CMD ["/smtpserver/smtprelay/target/release/smtprelay","send"]
 
   inbound_pop3server:
     container_name: pop3_mailserver
