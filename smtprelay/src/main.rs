@@ -10,22 +10,32 @@ use std::io;
 use std::net::{TcpStream,TcpListener};
 use std::process::ExitCode;
 use std::thread;
-use std::time::{Duration};
+use std::time::{Duration,SystemTime};
 use std::error::Error;
 use domain::resolv::stub::StubResolver;
 use domain::base::iana::{Rtype};
 use domain::base::name::Name;
 use domain::rdata::rfc1035::Mx;
+use std::io::Error as IoError;
+
+enum FailureType<E> {
+	Temporary(E),
+	Permanent(E),
+}
 
 fn main() -> ExitCode {
 	//====== process command line arguments ======
 	let args = Args::gather(&[
-		('h', Some("help"),    false ),
-		('p', Some("port"),    true  ),
-		('f', Some("db-path"), true  ),
+		('h', Some("help"),         false ),
+		('p', Some("port"),         true  ),
+		('f', Some("db-path"),      true  ),
+		('r', Some("retry-window"), true  ),
 	]);
 	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(9185);
 	let db_path = args.get_value('f').unwrap_or(String::from("/var/mail/outbound_queue.db"));
+	//24 hours
+	let retry_window_string = args.get_value('r').and_then(|w| w.parse().ok()).unwrap_or(60*60*24);
+	let retry_window = Duration::new(retry_window_string,0);
 	//====== setup email queue ======
 	let raw_queue = match EmailQueue::new(db_path){
 		Ok(q) => q,
@@ -38,7 +48,7 @@ fn main() -> ExitCode {
 	let mode = args.others().into_iter().map(|o| o.as_str()).next();
 	match mode {
 		Some("listen") => relay_recv(raw_queue,port),
-		Some("send") => relay_send(raw_queue),
+		Some("send") => relay_send(raw_queue,retry_window),
 		Some(_) => {
 			eprintln!("Unrecognised mode.");
 			ExitCode::FAILURE
@@ -50,14 +60,14 @@ fn main() -> ExitCode {
 	}
 }
 
-fn relay_send(queue: EmailQueue) -> ExitCode {
+fn relay_send(queue: EmailQueue, retry_window: Duration) -> ExitCode {
 	loop {
 		//====== attempt to send next email in queue ======
 		let queued_email = match queue.peek(){
 			Ok(Some(email)) => email,
 			Ok(None) => {
-				//wait 1 second between checking
-				thread::sleep(Duration::new(1,0));
+				//wait between checking if new emails have arived
+				thread::sleep(Duration::new(10,0));
 				continue;
 			}
 			Err(e) => {
@@ -67,65 +77,61 @@ fn relay_send(queue: EmailQueue) -> ExitCode {
 		};
 		let email = queued_email.email();
 		println!("sending email to {:?}",email.recipients_vec());
-		//====== send email to each recipient ======
-		//the same email is split into seperate items in the queue for each recipient
-		//so it is guaranteed to only have one recipient
-		let Some(recipient) = email.recipients_vec().pop()
-		else {
-			eprintln!("email has no recipients - discarding");
-			if let Err(e) = queue.delete(queued_email){
-				eprintln!("Error deleting queued email: {e}")
-			};
-			continue;
-		};
-		//====== query mx record for recipient ======
-		let mut mx_records = match fetch_email_mx_records(&recipient){
-			Ok(r) => r, Err(e) => {
-				eprintln!("Error fetching mx records for {recipient} - discarding: {e}");
-				//permanent failure
+		//send it
+		let result = resolve_and_send_email(email);
+		match result {
+			Ok(_) => {
+				//====== successfuly sent ======
 				if let Err(e) = queue.delete(queued_email){
 					eprintln!("Error deleting queued email: {e}");
-				};
-				continue;
-			}
-		};
-		//use highest priority mx record
-		let Some(mx_record) = mx_records.pop() else {
-			eprintln!("No mx records found for domain {recipient} - discarding");
-			//permanent failure
-			if let Err(e) = queue.delete(queued_email){
-				eprintln!("Error deleting queued email: {e}");
-			};
-			continue;
-		};
-		//====== connect to recipient relay ======
-		let mut connection = match TcpStream::connect((mx_record,25)){
-			Ok(c) => c, Err(e) => {
-				eprintln!("Error connecting: {e} - postponing");
-				//temporary failure
-				if let Err(e) = queue.retry_later(queued_email){
+				}
+				println!("email sent");
+			},
+			Err(FailureType::Permanent(err)) => {
+				//====== permanent failure ======
+				eprintln!("Permanent failure sending email: {err}");
+				if let Err(e) = queue.delete(queued_email){
+					eprintln!("Error deleting queued email: {e}");
+				}
+			},
+			Err(FailureType::Temporary(err)) => {
+				//====== temporary failure (try again later) ======
+				eprintln!("Temporary failure sending email: {err}");
+				//stop retrying after a certain amount of time has passed
+				if SystemTime::now() > queued_email.time_queued() + retry_window {
+					eprintln!("Email past retry window: discarding");
+					if let Err(e) = queue.delete(queued_email){
+						eprintln!("Error deleting queued email: {e}");
+					}
+				}else if let Err(e) = queue.retry_later(queued_email){
 					eprintln!("Error postponing queued email: {e}");
 				};
-				continue;
-			}
+			},
 		};
-		match send_emails(&mut connection,vec![email.clone()]){
-			Ok(_) => (),
-			Err(e) => {
-				eprintln!("Error sending emails: {e}");
-				//temporary failure
-				if let Err(e) = queue.retry_later(queued_email){
-					eprintln!("Error postponing queued email: {e}");
-				};
-				continue;
-			}
-		}
-		//successfuly sent
-		if let Err(e) = queue.delete(queued_email){
-			eprintln!("Error deleting queued email: {e}");
-		}
-		println!("email sent");
 	}
+}
+
+fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>>> {
+	//====== send email to each recipient ======
+	//the same email is split into seperate items in the queue for each recipient
+	//so it is guaranteed to only have one recipient
+	let Some(recipient) = email.recipients_vec().pop()
+	else { return Ok(()) }; //no recipients means nothing to do
+	//====== query mx record for recipient ======
+	let mut mx_records = fetch_email_mx_records(&recipient)
+		.map_err(|e| FailureType::Permanent(e))?;
+	//use highest priority mx record
+	let Some(mx_record) = mx_records.pop()
+	else {
+		return Err(FailureType::Permanent(Box::new(IoError::other("domain has no mx records"))));
+	};
+	//====== connect to recipient relay ======
+	let mut connection = TcpStream::connect((mx_record,25))
+		.map_err(|e| FailureType::Temporary(e.into()))?;
+	//====== send the emails ======
+	send_emails(&mut connection,vec![email.clone()])
+		.map_err(|e| FailureType::Temporary(e))?;
+	Ok(())
 }
 
 fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {

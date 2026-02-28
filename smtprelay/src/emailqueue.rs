@@ -1,6 +1,6 @@
 use maildb::Email;
 
-use std::time::{Instant,SystemTime,UNIX_EPOCH};
+use std::time::{SystemTime,UNIX_EPOCH,Duration};
 use std::convert::{From,Into};
 use std::path::Path;
 use rusqlite::{Connection,params,Error as SQLError,OptionalExtension};
@@ -10,7 +10,7 @@ use std::io;
 #[derive(Debug)]
 pub struct QueuedEmail {
 	email: Email,
-	time_added: Instant,
+	time_queued: SystemTime,
 	id: Option<i64>,
 }
 
@@ -109,6 +109,7 @@ impl EmailQueue {
 		let email = Email::new(senders_vec,vec![recipient],data);
 		let mut queued_email = QueuedEmail::from(email);
 		queued_email.id = Some(email_id);
+		queued_email.time_queued = UNIX_EPOCH + Duration::new(time_added as u64,0);
 		Ok(Some(queued_email))
 	}
 	pub fn retry_later(&self, email: QueuedEmail) -> Result<(),Box<dyn Error>>{
@@ -147,16 +148,17 @@ impl EmailQueue {
 }
 
 impl QueuedEmail {
-	pub fn new(email: Email, time_added: Instant) -> Self { 
+	pub fn new(email: Email, time_queued: SystemTime) -> Self { 
 		QueuedEmail {
-			email,time_added,id: None
+			email,time_queued,id: None
 		}
 	}
 	pub fn email<'a>(&'a self) -> &'a Email {&self.email}
 	pub fn id(&self) -> Option<i64> {self.id}
+	pub fn time_queued(&self) -> SystemTime {self.time_queued.clone()}
 }
 impl From<Email> for QueuedEmail {
 	fn from(email: Email) -> Self {
-		QueuedEmail {email, time_added: Instant::now(), id: None}
+		QueuedEmail {email, time_queued: SystemTime::now(), id: None}
 	}
 }
