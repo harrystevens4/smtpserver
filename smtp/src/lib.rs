@@ -158,10 +158,10 @@ pub fn send_emails(stream: &mut TcpStream, emails: Vec<Email>) -> Result<(),Box<
 	}
 	//====== quit ======
 	stream.write(b"QUIT\r\n")?;
-	line = readline(stream)?;
-	if !line.starts_with("2"){
-		return Err(io::Error::other(String::from("server error: ")+&line))?;
-	}
+	//line = readline(stream)?;
+	//if !line.starts_with("2"){
+	//	return Err(io::Error::other(String::from("server error: ")+&line))?;
+	//}
 	Ok(())
 }
 
