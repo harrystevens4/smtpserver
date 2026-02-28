@@ -23,6 +23,7 @@ pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Er
 		//mail has been stored
 		connection.write(b"250 Ok\r\n")?;
 	}
+	let _ = connection.write(b"221 Ending transaction\r\n");
 	//close connection
 	connection.shutdown(Shutdown::Both)?;
 	Ok(emails)
@@ -30,7 +31,7 @@ pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Er
 
 fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
 	//ack connection
-	connection.write(b"220 smtpserver\r\n")?;
+	connection.write(b"220 smtpserver at your service\r\n")?;
 	//3 attempts to send a valid handshake
 	for _ in 0..2 {
 		//wait for greeting
@@ -106,7 +107,7 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 		}
 	}
 	//====== construct the new email ======
-	let mut email = Email::new(senders,recipients,body);
+	let email = Email::new(senders,recipients,body);
 	Ok(email)
 }
 
