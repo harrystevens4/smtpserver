@@ -25,13 +25,58 @@ Mail is stored in the `emails` table, so you can use `sqlite3` to query them man
 
 # smtpserver
 
-smtpserver is a server for receiving emails over SMTP. It is not a relay.
+smtpserver is a server for receiving emails over SMTP. It is not a relay. It stores the received emails at an sqlite database `/var/mail/mail.db` in a format that pop3server recognises. It does not currently support TLS so traffic is unencrypted. The whole idea behind this server is that it has one global inbox, that all users can access, meaning that if you need access to a lot of different email addresses, you can simply log in with any account and view emails to any address. It does not enforce mailboxes, so even if a user doesn't exist, it will still allow the email to be delivered.
 
 # pop3server
 
-pop3server is a server for accessing mail stored by the smtpserver program. It provides basic features such as mail fetching and deletion.
+pop3server is a server for accessing mail stored by the smtpserver program. It provides basic features such as mail fetching and deletion. It is designed to be a way to access and manage mail stored by smtpserver to facilitate using graphical applications such as thunderbird. Does not support TLS currently, so it is not recommended to port forward this.
 
 # smtprelay
 
 smtprelay is a relay server that accepts outbound mail on port `9185` and forwards it to the correct destination. It operates in 2 different modes, with a listen and a send mode. When in listening mode, it will recieve emails on port `9185` and queue them at `/var/mail/outbound_queue.db`. when operating in send mode, it attempts to send all the queued emails stored in the database, and delete them once they have been delivered. For running it, you will need to run 2 processes with one running `smtprelay listen` and one running `smtprelay send`.
 
+# Accessing mail store programmatically
+
+## smtpserver database ERD
+
+```
++emails---------------------+
+| id INTEGER PK             | 
+| receipt_timestamp INTEGER |-----------------------+
+| senders TEXT              |                      /|\
+| recipients TEXT           |          +received-------------------------+
+| data TEXT                 |          | email_id INTEGER FK (emails id) |
++---------------------------+          | user_id INTEGER FK (users id)   |
+                                       +---------------------------------+
++users---------------+                             \|/
+| id INTEGER PK      |                              |
+| email_address TEXT |------------------------------+
+| password TEXT      | 
++--------------------+
+```
+Notes:
+ - received is not currently set up to have appropriate records added
+ - foreign keys are not set to be enforced
+ - `data` is stored according to RFC 5322 (with any trailing `<CRLF>` stripped)
+
+## smtprelay database ERD
+
+```
++emails---------+
+| id INTEGER PK |
+| senders TEXT  |
+| data TEXT     |
++---------------+
+     |
+     |
+    /|\
++recipient_queue------------------+
+| recipient TEXT                  | 
+| email_id INTEGER FK (emails id) |
+| time_added INTEGER              |
++---------------------------------+
+```
+Notes:
+ - `time_added` stored as UNIX timestamp
+ - foreign keys are enforced
+ - `email_id` set to `ON DELETE RESTRICT` so an email cannot be deleted if a recipient is queued for it
