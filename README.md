@@ -1,7 +1,7 @@
 
 # About
 
-This product is probably not very good in comparison to a professional software package. If you don't want something robust, use a different program.
+This product is probably not very good in comparison to a professional software package. If you want something robust, use a different program.
 What it is, however is small, local and modular, meaning you just set up the services for what you need. It also uses a combined inbox system, where every account shares a global inbox, meaning you don't need an account to receive an email, allowing you to have as many email accounts as required.
 
 # Setup
