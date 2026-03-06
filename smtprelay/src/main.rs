@@ -7,7 +7,7 @@ use args::Args;
 
 use std::str::FromStr;
 use std::io;
-use std::net::{TcpStream,TcpListener};
+use std::net::{TcpStream,TcpListener,ToSocketAddrs};
 use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration,SystemTime};
@@ -17,6 +17,9 @@ use domain::base::iana::{Rtype};
 use domain::base::name::Name;
 use domain::rdata::rfc1035::Mx;
 use std::io::Error as IoError;
+
+use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection};
+use rustls_pki_types::{ServerName};
 
 enum FailureType<E> {
 	Temporary(E),
@@ -93,7 +96,7 @@ fn relay_send(queue: EmailQueue, retry_window: Duration) -> ExitCode {
 			}
 		};
 		let email = queued_email.email();
-		println!("sending email to {:?}",email.recipients_vec());
+		println!("======> sending email to {:?}",email.recipients_vec());
 		//send it
 		let result = resolve_and_send_email(email);
 		match result {
@@ -143,12 +146,44 @@ fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>
 		return Err(FailureType::Permanent(Box::new(IoError::other("domain has no mx records"))));
 	};
 	//====== connect to recipient relay ======
-	let mut connection = TcpStream::connect((mx_record,25))
-		.map_err(|e| FailureType::Temporary(e.into()))?;
-	//====== send the emails ======
-	send_emails(&mut connection,vec![email.clone()])
-		.map_err(|e| FailureType::Temporary(e))?;
+	println!("==> attempting tls connection");
+	match tls_connect(&mx_record,465){
+		Ok(mut stream) => {
+			//try tls first
+			send_emails(&mut stream,vec![email.clone()])
+				.map_err(|e| FailureType::Temporary(e))?;
+			println!("==> sending emails...");
+		}
+		Err(e) => {
+			eprintln!("tls error: {e}");
+			//then fallback to plaintext
+			println!("==> falling back to plaintext");
+			let mut stream = TcpStream::connect((mx_record.clone(),25))
+				.map_err(|e| FailureType::Temporary(e.into()))?;
+			println!("==> sending emails...");
+			send_emails(&mut stream,vec![email.clone()])
+				.map_err(|e| FailureType::Temporary(e))?;
+		}
+	};
 	Ok(())
+}
+
+fn tls_connect(destination: &str, port: u16) -> Result<StreamOwned<ClientConnection,TcpStream>,Box<dyn Error>> {
+	let root_store = RootCertStore {
+		roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+	};
+	let config = ClientConfig::builder()
+		.with_root_certificates(root_store)
+		.with_no_client_auth();
+	let name = ServerName::try_from(destination.to_string())?;
+	let tls = ClientConnection::new(config.into(),name)?;
+	println!("connecting...");
+	let connection = TcpStream::connect_timeout(
+		&(destination,port).to_socket_addrs()?.next().ok_or(IoError::other("No address could be resolved"))?,
+		Duration::new(1,0)
+	)?;
+	println!("connected");
+	Ok(StreamOwned::new(tls,connection))
 }
 
 fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
