@@ -4,6 +4,9 @@ use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
 
+pub trait ReadWrite: Read + Write {}
+impl ReadWrite for TcpStream {}
+
 pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Error>>{
 	//====== handshake ======
 	smtp_handshake(&mut connection)?;
@@ -111,7 +114,7 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 	Ok(email)
 }
 
-pub fn send_emails(stream: &mut TcpStream, emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
+pub fn send_emails(stream: &mut dyn ReadWrite, emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
 	//====== handshake ======
 	let mut line = readline(stream)?;
 	if !line.starts_with("220"){
@@ -165,34 +168,30 @@ pub fn send_emails(stream: &mut TcpStream, emails: Vec<Email>) -> Result<(),Box<
 	Ok(())
 }
 
-fn readline(stream: &mut TcpStream) -> io::Result<String> {
+fn readline(stream: &mut dyn Read) -> io::Result<String> {
 	let mut line_buffer: Vec<u8> = vec![];
 	loop {
-		let mut read_buffer = [0; 256];
-		let bytes_read = stream.peek(&mut read_buffer)?;
+		let mut read_buffer = [0_u8; 1];
+		let bytes_read = stream.read(&mut read_buffer)?;
 		if bytes_read == 0 {return Err(io::Error::from(ErrorKind::ConnectionReset))}
-		if let Some(line_length) = read_buffer
-			.iter()
-			.map(|c| char::from(*c))
-			.collect::<String>()
-			.find('\n')
-			.map(|n| n+1)
-		{
-			stream.read(&mut read_buffer[..line_length])?;
-			line_buffer.extend_from_slice(&read_buffer[..line_length]);
-			break;
-		}else {
-			stream.read(&mut read_buffer)?;
+		else {
 			line_buffer.extend_from_slice(&read_buffer);
 		}
+		let line_len = line_buffer.len();
+		if line_buffer.len() > 0 && &line_buffer[line_len-1..] == b"\n" {break}
 	}
+	//adjust line length to omit trailing "\n" or "\r\n" if present
+	let line_length = if line_buffer.len() > 1 && &line_buffer[line_buffer.len()-2..] == b"\r\n" {
+		line_buffer.len() - 2
+	}else {
+		line_buffer.len() - 1
+	};
 	//final buffer w/o \n
 	Ok(line_buffer
 		.into_iter()
 		.map(char::from)
+		.take(line_length)//strip training \r\n
 		.collect::<String>()
-		.trim_end_matches('\n')
-		.trim_end_matches('\r')
 		.into()
 	)
 }
