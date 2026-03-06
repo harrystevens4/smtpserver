@@ -4,9 +4,6 @@ use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
 
-pub trait ReadWrite: Read + Write {}
-impl ReadWrite for TcpStream {}
-
 pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Error>>{
 	//====== handshake ======
 	smtp_handshake(&mut connection)?;
@@ -114,7 +111,7 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 	Ok(email)
 }
 
-pub fn send_emails(stream: &mut dyn ReadWrite, emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
+pub fn send_emails(stream: &mut (impl Read + Write), emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
 	//====== handshake ======
 	let mut line = readline(stream)?;
 	if !line.starts_with("220"){
@@ -168,7 +165,7 @@ pub fn send_emails(stream: &mut dyn ReadWrite, emails: Vec<Email>) -> Result<(),
 	Ok(())
 }
 
-fn readline(stream: &mut dyn Read) -> io::Result<String> {
+fn readline(stream: &mut impl Read) -> io::Result<String> {
 	let mut line_buffer: Vec<u8> = vec![];
 	loop {
 		let mut read_buffer = [0_u8; 1];
