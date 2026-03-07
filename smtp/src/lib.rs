@@ -3,6 +3,14 @@ use std::net::{TcpStream,Shutdown};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
+use std::time::{Duration};
+
+use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection};
+use rustls_pki_types::{ServerName};
+
+trait ReadWrite: Read + Write {}
+impl ReadWrite for TcpStream {}
+impl ReadWrite for StreamOwned<ClientConnection,TcpStream> {}
 
 pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Error>>{
 	//====== handshake ======
@@ -111,18 +119,63 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 	Ok(email)
 }
 
-pub fn send_emails(stream: &mut (impl Read + Write), emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
-	//====== handshake ======
+//return a list of capabilities
+fn smtp_ehlo(stream: &mut dyn ReadWrite) -> Result<Vec<String>,Box<dyn Error>> {
 	let mut line = readline(stream)?;
 	if !line.starts_with("220"){
 		return Err(io::Error::other("failed smtp handshake"))?;
 	}
-	stream.write(b"HELO smtprelay\r\n")?;
+	let mut capabilities = vec![];
+	//====== attempt EHLO ======
+	stream.write(b"EHLO smtprelay\r\n")?;
 	line = readline(stream)?;
-	if !line.starts_with("250"){
-		return Err(io::Error::other("failed smtp handshake"))?;
+	if line.starts_with("2"){
+		//====== read capability list ======
+		loop {
+			let line = readline(stream)?;
+			//check for error
+			if !line.starts_with("250") {
+				return Err(io::Error::other(format!("Error completing handshake: {line}")))?
+			}
+			if line.len() >= 4 {capabilities.push(line[4..].to_string().to_ascii_uppercase())}
+			//check for end of capabilities
+			if line.starts_with("250 "){ //as opposed to "250-"
+				break;
+			}
+		}
+	}else {
+		//====== fallback to HELO ======
+		stream.write(b"HELO smtprelay\r\n")?;
+		line = readline(stream)?;
+		if !line.starts_with("250"){
+			return Err(io::Error::other("failed smtp handshake"))?;
+		}
 	}
+	Ok(capabilities)
+}
+
+pub fn send_emails(address: &str, emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
+	//====== connect ======
+	let mut initial_connection = TcpStream::connect((address,25))?;
+	//====== handshake ======
+	let capabilities = smtp_ehlo(&mut initial_connection)?;
+	//====== attempt to upgrade connection if possible ======
+	let mut boxed_stream: Box<dyn ReadWrite> = Box::new(initial_connection.try_clone()?);
+	//check for STARTTLS capability
+	if capabilities.contains(&String::from("STARTTLS")){
+		println!("==> upgrading connection to tls");
+		initial_connection.write(b"STARTTLS\r\n")?;
+		let line = readline(&mut initial_connection)?;
+		if !line.starts_with("2"){
+			return Err(io::Error::other(format!("failed STARTTLS: {}",line)))?;
+		}
+		boxed_stream = Box::new(tls_upgrade(address,initial_connection)?);
+		println!("==> upgrade successfull");
+	}
+	//makes my life easier
+	let stream = &mut *boxed_stream;
 	//====== send emails ======
+	let mut line = String::new();
 	for email in emails {
 		//====== senders ======
 		for sender in email.senders_vec() {
@@ -165,7 +218,7 @@ pub fn send_emails(stream: &mut (impl Read + Write), emails: Vec<Email>) -> Resu
 	Ok(())
 }
 
-fn readline(stream: &mut impl Read) -> io::Result<String> {
+fn readline(stream: &mut dyn Read) -> io::Result<String> {
 	let mut line_buffer: Vec<u8> = vec![];
 	loop {
 		let mut read_buffer = [0_u8; 1];
@@ -191,4 +244,16 @@ fn readline(stream: &mut impl Read) -> io::Result<String> {
 		.collect::<String>()
 		.into()
 	)
+}
+
+fn tls_upgrade(destination: &str, connection: TcpStream) -> Result<StreamOwned<ClientConnection,TcpStream>,Box<dyn Error>> {
+	let root_store = RootCertStore {
+		roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+	};
+	let config = ClientConfig::builder()
+		.with_root_certificates(root_store)
+		.with_no_client_auth();
+	let name = ServerName::try_from(destination.to_string())?;
+	let tls = ClientConnection::new(config.into(),name)?;
+	Ok(StreamOwned::new(tls,connection))
 }
