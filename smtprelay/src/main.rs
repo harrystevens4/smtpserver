@@ -7,7 +7,7 @@ use args::Args;
 
 use std::str::FromStr;
 use std::io;
-use std::net::{TcpStream,TcpListener,ToSocketAddrs};
+use std::net::{TcpListener};
 use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration,SystemTime};

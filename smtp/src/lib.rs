@@ -3,7 +3,7 @@ use std::net::{TcpStream,Shutdown};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
-use std::time::{Duration};
+//use std::time::{Duration};
 
 use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection};
 use rustls_pki_types::{ServerName};
@@ -175,7 +175,7 @@ pub fn send_emails(address: &str, emails: Vec<Email>) -> Result<(),Box<dyn Error
 	//makes my life easier
 	let stream = &mut *boxed_stream;
 	//====== send emails ======
-	let mut line = String::new();
+	let mut line;
 	for email in emails {
 		//====== senders ======
 		for sender in email.senders_vec() {
