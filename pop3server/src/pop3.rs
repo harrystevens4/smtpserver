@@ -33,7 +33,6 @@ pub fn pop3_authenticate<
 	U: Fn(&str) -> Result<bool,Box<dyn error::Error>>,
 	P: Fn(&str,&str) -> Result<bool,Box<dyn error::Error>>
 >(mut stream: TcpStream, pop3_config: &POP3Config, verify_user: U, verify_pass: P) -> Result<(String,Box<dyn ReadWrite>),Box<dyn error::Error>> {
-	let mut tls_active = false;
 	let mut connection = Box::new(stream) as Box<dyn ReadWrite>;
 	loop {
 		let line = readline(&mut connection)?;
@@ -49,29 +48,35 @@ pub fn pop3_authenticate<
 					connection.write(b".\r\n")?;
 				},
 				"STLS" => {
+					//====== check for tls support ======
 					if !pop3_config.tls_enabled {
 						connection.write(b"-ERR tls not supported\r\n")?;
 						continue;
 					}
-					if tls_active == true {
-						connection.write(b"-ERR tls already active\r\n")?;
-						continue;
-					}
-					tls_active = true;
-					connection.write(b"+OK Begin negotiations\r\n")?;
-					println!("attempting tls upgrade...");
-					let tcp_stream: Box<TcpStream> = (connection as Box<dyn Any>)
-						.downcast()
-						.map_err(|_| io::Error::other("Could not downcast Box"))?;
-
-					//====== try to upgrade ======
-					connection = match tls_upgrade((*tcp_stream).try_clone()?,pop3_config){
-						Ok(stream) => Box::new(stream) as Box<dyn ReadWrite>,
-						Err(error) => {
-							eprintln!("Error upgrading TLS: {error}");
-							tcp_stream
+					match (connection as Box<dyn Any>).downcast::<TcpStream>(){
+						Ok(mut tcp_stream) => {
+							tcp_stream.write(b"+OK Begin negotiations\r\n")?;
+							println!("attempting tls upgrade...");
+							//====== try to upgrade ======
+							connection = match tls_upgrade((*tcp_stream).try_clone()?,pop3_config){
+								Ok(stream) => Box::new(stream) as Box<dyn ReadWrite>,
+								Err(error) => {
+									eprintln!("Error upgrading TLS: {error}");
+									tcp_stream
+								}
+							};
+						},
+						Err(mut tcp_stream) => {
+							//====== already using tls ======
+							//put the old connection back
+							connection = tcp_stream
+								.downcast::<TcpStream>()
+								.map_err(|_| io::Error::other("Box downcast failed"))?
+								as Box<dyn ReadWrite>;
+							connection.write(b"-ERR tls already active\r\n")?;
+							continue;
 						}
-					};
+					}
 				}
 				"USER" => {
 					let user = split_line.next();
