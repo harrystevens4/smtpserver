@@ -9,6 +9,7 @@ use std::any::Any;
 
 use rustls::{StreamOwned,ServerConfig,ServerConnection};
 use rustls_pki_types::{CertificateDer,PrivateKeyDer};
+use rustls_pki_types::pem::PemObject;
 
 pub trait ReadWrite: Read + Write + Any {}
 impl ReadWrite for TcpStream {}
@@ -16,10 +17,10 @@ impl ReadWrite for StreamOwned<ServerConnection,TcpStream> {}
 
 #[derive(Default)]
 pub struct POP3Config {
-	tls_enabled: bool,
-	tls_private_key: Option<PrivateKeyDer<'static>>,
-	tls_certs: Option<Vec<CertificateDer<'static>>>,
-	domain: String,
+	pub tls_enabled: bool,
+	pub tls_private_key: Option<String>,
+	pub tls_certs: Option<String>,
+	pub domain: String,
 }
 
 pub fn pop3_handshake(connection: &mut TcpStream) -> io::Result<()> {
@@ -31,7 +32,7 @@ pub fn pop3_handshake(connection: &mut TcpStream) -> io::Result<()> {
 pub fn pop3_authenticate<
 	U: Fn(&str) -> Result<bool,Box<dyn error::Error>>,
 	P: Fn(&str,&str) -> Result<bool,Box<dyn error::Error>>
->(mut stream: TcpStream, verify_user: U, verify_pass: P) -> Result<(String,Box<dyn ReadWrite>),Box<dyn error::Error>> {
+>(mut stream: TcpStream, pop3_config: &POP3Config, verify_user: U, verify_pass: P) -> Result<(String,Box<dyn ReadWrite>),Box<dyn error::Error>> {
 	let mut tls_active = false;
 	let mut connection = Box::new(stream) as Box<dyn ReadWrite>;
 	loop {
@@ -42,27 +43,35 @@ pub fn pop3_authenticate<
 				"CAPA" => {
 					connection.write(b"+OK list follows\r\n")?;
 					connection.write(b"USER\r\n")?;
-					connection.write(b"STLS\r\n")?;
+					if pop3_config.tls_enabled {
+						connection.write(b"STLS\r\n")?;
+					}
 					connection.write(b".\r\n")?;
 				},
 				"STLS" => {
+					if !pop3_config.tls_enabled {
+						connection.write(b"-ERR tls not supported\r\n")?;
+						continue;
+					}
 					if tls_active == true {
 						connection.write(b"-ERR tls already active\r\n")?;
 						continue;
 					}
 					tls_active = true;
 					connection.write(b"+OK Begin negotiations\r\n")?;
+					println!("attempting tls upgrade...");
 					let tcp_stream: Box<TcpStream> = (connection as Box<dyn Any>)
 						.downcast()
 						.map_err(|_| io::Error::other("Could not downcast Box"))?;
 
-					connection = match tls_upgrade((*tcp_stream).try_clone()?,&POP3Config::default()){
+					//====== try to upgrade ======
+					connection = match tls_upgrade((*tcp_stream).try_clone()?,pop3_config){
 						Ok(stream) => Box::new(stream) as Box<dyn ReadWrite>,
 						Err(error) => {
 							eprintln!("Error upgrading TLS: {error}");
 							tcp_stream
 						}
-					}
+					};
 				}
 				"USER" => {
 					let user = split_line.next();
@@ -235,10 +244,14 @@ fn readline(stream: &mut dyn Read) -> io::Result<String> {
 
 fn tls_upgrade(connection: TcpStream, config: &POP3Config) -> Result<StreamOwned<ServerConnection,TcpStream>,Box<dyn Error>> {
 	//====== verify certificates and private key present ======
-	let Some(ref certs) = config.tls_certs
+	let Some(ref certs_file) = config.tls_certs
 		else {Err(io::Error::other("no tls certificate provided"))?};
-	let Some(ref private_key) = config.tls_private_key
+	let Some(ref private_key_file) = config.tls_private_key
 		else {Err(io::Error::other("no tls private key provided"))?};
+	let certs = CertificateDer::pem_file_iter(certs_file)?
+		.filter_map(|c| c.ok())
+		.collect();
+	let private_key = PrivateKeyDer::from_pem_file(private_key_file)?;
 	//====== build the config ======
 	let config = ServerConfig::builder()
 		.with_no_client_auth()
