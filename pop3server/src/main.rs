@@ -57,7 +57,7 @@ fn handle_connection(mut connection: TcpStream, mail_db: &MailDB) -> Result<(),B
 	println!("shaking hands...");
 	pop3_handshake(&mut connection)?;
 	println!("authenticating...");
-	let user = pop3_authenticate(&mut connection,
+	let (user,mut connection) = pop3_authenticate(connection,
 		|user|{
 			Ok(mail_db.check_user_exists(user)?)
 		},
@@ -66,7 +66,7 @@ fn handle_connection(mut connection: TcpStream, mail_db: &MailDB) -> Result<(),B
 		}
 	)?;
 	println!("processing transactions...");
-	pop3_process_transactions(&mut connection,&mail_db,&user)?;
+	pop3_process_transactions(&mut *connection,&mail_db,&user)?;
 	Ok(())
 }
 
