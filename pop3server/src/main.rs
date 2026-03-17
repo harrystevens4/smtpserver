@@ -33,6 +33,7 @@ fn main() -> ExitCode {
 		}
 	}
 	//====== database ======
+	println!("loading database...");
 	let mail_db = match MailDB::open(&db_path){
 		Ok(db) => db,
 		Err(err) => {
@@ -41,6 +42,7 @@ fn main() -> ExitCode {
 		}
 	};
 	//====== listen for tcp connections ======
+	println!("listening on port 110...");
 	let listener = match TcpListener::bind("0.0.0.0:110"){
 		Ok(l) => l, Err(e) => {
 			eprintln!("Couldn't bind to port 110: {e}");
