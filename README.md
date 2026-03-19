@@ -64,11 +64,11 @@ Notes:
 ```
 +emails---------+
 | id INTEGER PK |
-| senders TEXT  |
-| data TEXT     |
-+---------------+
-     |
-     |
+| senders TEXT  |   +users------------+
+| data TEXT     |   |PK id            |
++---------------+   |   email_address |
+     |              |   password      |
+     |              +-----------------+
     /|\
 +recipient_queue------------------+
 | recipient TEXT                  | 
@@ -80,3 +80,5 @@ Notes:
  - `time_added` stored as UNIX timestamp
  - foreign keys are enforced
  - `email_id` set to `ON DELETE RESTRICT` so an email cannot be deleted if a recipient is queued for it
+ - users table is not connected to any others
+ - users table follows the same format as that of smtpserver
