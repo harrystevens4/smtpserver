@@ -29,11 +29,11 @@ smtpserver is a server for receiving emails over SMTP. It is not a relay. It sto
 
 # pop3server
 
-pop3server is a server for accessing mail stored by the smtpserver program. It provides basic features such as mail fetching and deletion. It is designed to be a way to access and manage mail stored by smtpserver to facilitate using graphical applications such as thunderbird. Does not support TLS currently, so it is not recommended to port forward this.
+pop3server is a server for accessing mail stored by the smtpserver program. It provides basic features such as mail fetching and deletion. It is designed to be a way to access and manage mail stored by smtpserver to facilitate using graphical applications such as thunderbird. TLS support is currently available through STARTTLS, so is optional for clients to use. A certificate and private key file can be provided using the `-c <cert-path>` and `-k <key-path>` arguments respectively. When connecting using a client such as Thunderbird, set the security to STARTTLS to use this.
 
 # smtprelay
 
-smtprelay is a relay server that accepts outbound mail on port `9185` and forwards it to the correct destination. It operates in 2 different modes, with a listen and a send mode. When in listening mode, it will recieve emails on port `9185` and queue them at `/var/mail/outbound_queue.db`. when operating in send mode, it attempts to send all the queued emails stored in the database, and delete them once they have been delivered. For running it, you will need to run 2 processes with one running `smtprelay listen` and one running `smtprelay send`.
+smtprelay is a relay server that accepts outbound mail on port `9185` and forwards it to the correct destination. It operates in 2 different modes, with a listen and a send mode. When in listening mode, it will receive emails on port `9185` and queue them at `/var/mail/outbound_queue.db`. when operating in send mode, it attempts to send all the queued emails stored in the database, and delete them once they have been delivered. For running it, you will need to run 2 processes with one running `smtprelay listen` and one running `smtprelay send`.
 
 # Accessing mail store programmatically
 
