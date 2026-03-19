@@ -7,12 +7,28 @@ use std::io;
 
 use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection};
 use rustls_pki_types::{ServerName};
+use std::default::Default;
 
 trait ReadWrite: Read + Write {}
 impl ReadWrite for TcpStream {}
 impl ReadWrite for StreamOwned<ClientConnection,TcpStream> {}
 
-pub fn recieve_emails(mut connection: TcpStream) -> Result<Vec<Email>,Box<dyn Error>>{
+pub struct SMTPServerConfig {
+	pub auth_required: bool,
+	pub check_user: fn(&str) -> bool, //takes username
+	pub check_password: fn(&str,&str) -> bool, //takes username,password
+}
+impl Default for SMTPServerConfig {
+	fn default() -> Self {
+		SMTPServerConfig {
+			auth_required: false,
+			check_user: |_| true,
+			check_password: |_,_| true,
+		}
+	}
+}
+
+pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> Result<Vec<Email>,Box<dyn Error>>{
 	//====== handshake ======
 	smtp_handshake(&mut connection)?;
 	//====== process mail ======
@@ -47,6 +63,12 @@ fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
 		//verify greeting
 		if buffer.to_ascii_uppercase().starts_with("HELO"){
 			connection.write(b"250 Ok\r\n")?;
+			return Ok(());
+		//extended hello
+		}else if buffer.to_ascii_uppercase().starts_with("EHLO"){
+			//multi line response (250 then '-' except last with 250 then ' ')
+			connection.write(b"250-smtpserver\r\n")?;
+			connection.write(b"250 AUTH PLAIN\r\n")?;
 			return Ok(());
 		}else {
 			connection.write(b"502 Unsupported\r\n")?;

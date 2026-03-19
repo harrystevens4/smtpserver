@@ -29,6 +29,12 @@ impl EmailQueue {
 		//|   senders  |-----+-|FK email_id       |
 		//|   data     |      \|   time_added     |
 		//+------------+       +------------------+
+		//
+		//          +users------------+
+		//          |PK id            |
+		//          |   email_address |
+		//          |   password      |
+		//          +-----------------+
 		database.execute("
 			CREATE TABLE IF NOT EXISTS emails (
 				id INTEGER PRIMARY KEY,
@@ -47,6 +53,13 @@ impl EmailQueue {
 				FOREIGN KEY (email_id) REFERENCES emails (id)
 					ON UPDATE CASCADE
 					ON DELETE RESTRICT
+			)
+		",[])?;
+		database.execute("
+			CREATE TABLE IF NOT EXISTS users (
+				id INTEGER PRIMARY KEY,
+				email_address TEXT,
+				password TEXT,
 			)
 		",[])?;
 		//===== enable foreign key constraints ======

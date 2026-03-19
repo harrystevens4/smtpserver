@@ -2,7 +2,7 @@ use maildb::Email;
 mod emailqueue;
 
 use crate::emailqueue::EmailQueue;
-use smtp::{send_emails,recieve_emails};
+use smtp::{send_emails,recieve_emails,SMTPServerConfig};
 use args::Args;
 
 use std::str::FromStr;
@@ -12,11 +12,12 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration,SystemTime};
 use std::error::Error;
+use std::io::Error as IoError;
+use std::default::Default;
 use domain::resolv::stub::StubResolver;
 use domain::base::iana::{Rtype};
 use domain::base::name::Name;
 use domain::rdata::rfc1035::Mx;
-use std::io::Error as IoError;
 
 enum FailureType<E> {
 	Temporary(E),
@@ -149,6 +150,7 @@ fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>
 }
 
 fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
+	let config = SMTPServerConfig::default();
 	//====== listen for connections ======
 	let listener = match TcpListener::bind(("0.0.0.0",port)) {
 		Ok(l) => l, Err(e) => {
@@ -162,7 +164,7 @@ fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
 		//ignore connection errors
 		let Ok((connection,address)) = listener.accept() else {continue};
 		println!("===> new outbound mail connection: {address}");
-		let emails = match recieve_emails(connection) {
+		let emails = match recieve_emails(connection,&config) {
 			Ok(emails) => emails,
 			Err(err) => {
 				eprintln!("error while receiving emails: {err}");
