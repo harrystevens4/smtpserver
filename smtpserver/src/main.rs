@@ -1,4 +1,4 @@
-use smtp::recieve_emails;
+use smtp::{recieve_emails,SMTPServerConfig};
 use maildb::MailDB;
 use args::Args;
 use std::env;
@@ -46,7 +46,8 @@ fn main() -> ExitCode {
 		};
 		println!("========> new connection [{addr}] <========");
 		//pass connection to receive function
-		let emails = match recieve_emails(socket){
+		let config = SMTPServerConfig::default();
+		let emails = match recieve_emails(socket,&config){
 			Ok(emails) => emails,
 			Err(e) => {
 				eprintln!("receive_email: {}",e);
