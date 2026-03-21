@@ -85,7 +85,7 @@ fn smtp_handshake(connection: &mut TcpStream, capabilities: &[&str]) -> io::Resu
 }
 
 fn send_multipart(stream: &mut dyn Write, items: &[&str], code: &str) -> io::Result<()>{
-	let mut lines = Vec::from(items);
+	let lines = Vec::from(items);
 	for (i,line) in lines.iter().enumerate() {
 		let prefix = if i+1 == lines.len() {
 			format!("{code} ")
@@ -109,6 +109,11 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 			//====== end of mail ======
 			return Err(io::Error::from(io::ErrorKind::ConnectionReset));
 		}else if line.to_ascii_uppercase().starts_with("MAIL FROM"){
+			//check authentication status
+			if config.auth_required && !authenticated {
+				connection.write(b"530 Authentication required\r\n")?;
+				continue;
+			}
 			//====== senders ======
 			let Some(sender) = line.split_once(':')
  				// extract address from between < and > brackets
@@ -123,6 +128,11 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 			//send positive ack
 			connection.write(b"250 Ok\r\n")?;
 		}else if line.to_ascii_uppercase().starts_with("RCPT TO"){
+			//check authentication status
+			if config.auth_required && !authenticated {
+				connection.write(b"530 Authentication required\r\n")?;
+				continue;
+			}
 			//====== recipients ======
 			// extract address from between < and > brackets 
 			let Some(recipient) = line.split_once(':')
@@ -137,6 +147,11 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 			//send positive ack
 			connection.write(b"250 Ok\r\n")?;
 		}else if line.to_ascii_uppercase().starts_with("DATA"){
+			//check authentication status
+			if config.auth_required && !authenticated {
+				connection.write(b"530 Authentication required\r\n")?;
+				continue;
+			}
 			//====== email body ======
 			//send intermediate reply
 			connection.write(b"354 Ok\r\n")?;
@@ -157,24 +172,24 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 			connection.write(b"334 VXNlcm5hbWU6\r\n")?;
 			let Ok(Ok(username)) = BASE64_STANDARD.decode(readline(connection)?).map(String::from_utf8)
 			else {
-				connection.write(b"501 Could not base64 decode username\r\n");
+				connection.write(b"501 Could not base64 decode username\r\n")?;
 				continue;
 			};
 			//ask for password
 			connection.write(b"334 UGFzc3dvcmQ6\r\n")?;
 			let Ok(Ok(password)) = BASE64_STANDARD.decode(readline(connection)?).map(String::from_utf8)
 			else {
-				connection.write(b"501 Could not base64 decode password\r\n");
+				connection.write(b"501 Could not base64 decode password\r\n")?;
 				continue;
 			};
 			//verify credentials
 			if (config.check_user)(&username) && (config.check_password)(&username,&password) {
 				//success
-				connection.write(b"235 Authentication successfull\r\n");
+				connection.write(b"235 Authentication successfull\r\n")?;
 				authenticated = true;
 			}else {
 				//epic authentication fail
-				connection.write(b"535 Bad username or password\r\n");
+				connection.write(b"535 Bad username or password\r\n")?;
 				continue;
 			}
 		}else {
