@@ -150,7 +150,8 @@ fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>
 }
 
 fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
-	let config = SMTPServerConfig::default();
+	let mut config = SMTPServerConfig::default();
+	config.auth_required = true;
 	//====== listen for connections ======
 	let listener = match TcpListener::bind(("0.0.0.0",port)) {
 		Ok(l) => l, Err(e) => {

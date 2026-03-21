@@ -59,7 +59,7 @@ impl EmailQueue {
 			CREATE TABLE IF NOT EXISTS users (
 				id INTEGER PRIMARY KEY,
 				email_address TEXT,
-				password TEXT,
+				password TEXT
 			)
 		",[])?;
 		//===== enable foreign key constraints ======

@@ -3,11 +3,12 @@ use std::net::{TcpStream,Shutdown};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
+use std::default::Default;
 //use std::time::{Duration};
 
 use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection};
 use rustls_pki_types::{ServerName};
-use std::default::Default;
+use base64::prelude::*;
 
 trait ReadWrite: Read + Write {}
 impl ReadWrite for TcpStream {}
@@ -30,12 +31,17 @@ impl Default for SMTPServerConfig {
 
 pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> Result<Vec<Email>,Box<dyn Error>>{
 	//====== handshake ======
-	smtp_handshake(&mut connection)?;
+	let mut capabilities = vec![];
+	//enable auth if required
+	if config.auth_required {
+		capabilities.push("AUTH LOGIN");
+	}
+	smtp_handshake(&mut connection,&capabilities)?;
 	//====== process mail ======
 	let mut emails = vec![];
 	//multiple messages, one connection
 	loop {
-		let email = match smtp_receive_email(&mut connection){
+		let email = match smtp_receive_email(&mut connection,config){
 			//no more emails
 			Err(err) if err.kind() == ErrorKind::ConnectionReset => {break},
 			//error
@@ -53,7 +59,7 @@ pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> R
 	Ok(emails)
 }
 
-fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
+fn smtp_handshake(connection: &mut TcpStream, capabilities: &[&str]) -> io::Result<()>{
 	//ack connection
 	connection.write(b"220 smtpserver at your service\r\n")?;
 	//3 attempts to send a valid handshake
@@ -67,8 +73,9 @@ fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
 		//extended hello
 		}else if buffer.to_ascii_uppercase().starts_with("EHLO"){
 			//multi line response (250 then '-' except last with 250 then ' ')
-			connection.write(b"250-smtpserver\r\n")?;
-			connection.write(b"250 AUTH PLAIN\r\n")?;
+			let mut capabilities_copy = vec!["smtpserver"];
+			capabilities_copy.extend(capabilities);
+			send_multipart(connection,&capabilities_copy,"250")?;
 			return Ok(());
 		}else {
 			connection.write(b"502 Unsupported\r\n")?;
@@ -77,11 +84,25 @@ fn smtp_handshake(connection: &mut TcpStream) -> io::Result<()>{
 	Err(io::Error::other("malformed greeting in request"))
 }
 
-fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
+fn send_multipart(stream: &mut dyn Write, items: &[&str], code: &str) -> io::Result<()>{
+	let mut lines = Vec::from(items);
+	for (i,line) in lines.iter().enumerate() {
+		let prefix = if i+1 == lines.len() {
+			format!("{code} ")
+		}else {
+			format!("{code}-")
+		};
+		stream.write(format!("{prefix}{line}\r\n").as_bytes())?;
+	}
+	Ok(())
+}
+
+fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> io::Result<Email>{
 	//=> based off RFC 5321 <=//
 	let mut senders: Vec<String> = vec![];
 	let mut recipients: Vec<String> = vec![];
 	let mut body = String::new();
+	let mut authenticated = false;
 	loop {
 		let line = readline(connection)?;
 		if line.to_ascii_uppercase().starts_with("QUIT"){
@@ -130,6 +151,32 @@ fn smtp_receive_email(connection: &mut TcpStream) -> io::Result<Email>{
 			body = body.trim_end_matches("\n").to_string();
 			//exit
 			break;
+		}else if line.to_ascii_uppercase().starts_with("AUTH LOGIN"){
+			//====== authentication ======
+			//ask for username
+			connection.write(b"334 VXNlcm5hbWU6\r\n")?;
+			let Ok(Ok(username)) = BASE64_STANDARD.decode(readline(connection)?).map(String::from_utf8)
+			else {
+				connection.write(b"501 Could not base64 decode username\r\n");
+				continue;
+			};
+			//ask for password
+			connection.write(b"334 UGFzc3dvcmQ6\r\n")?;
+			let Ok(Ok(password)) = BASE64_STANDARD.decode(readline(connection)?).map(String::from_utf8)
+			else {
+				connection.write(b"501 Could not base64 decode password\r\n");
+				continue;
+			};
+			//verify credentials
+			if (config.check_user)(&username) && (config.check_password)(&username,&password) {
+				//success
+				connection.write(b"235 Authentication successfull\r\n");
+				authenticated = true;
+			}else {
+				//epic authentication fail
+				connection.write(b"535 Bad username or password\r\n");
+				continue;
+			}
 		}else {
 			//====== command error ======
 			connection.write(b"500 Unknown command\r\n")?;
