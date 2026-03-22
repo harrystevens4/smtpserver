@@ -67,7 +67,17 @@ pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> R
 		//since a connection can be upgraded to tls
 		let (returned_connection,email) = match smtp_receive_email(connection,config){
 			//error
-			Err(e) => return Err(e),
+			Err(e) => {
+				if let Some(io_error) = e.downcast_ref::<io::Error>(){
+					//if there is an unexpected EOF the client is done
+					//so simply return the emails as the connection
+					//is already closed.
+					if io_error.kind() == io::ErrorKind::UnexpectedEof {
+						return Ok(emails)
+					}
+				}
+				return Err(e)
+			},
 			//successful receipt of new email
 			Ok((connection,email)) => (connection,email),
 		};
@@ -203,10 +213,12 @@ fn smtp_receive_email(mut connection: Box<dyn ReadWrite>, config: &SMTPServerCon
 			if (config.check_user)(&username) && (config.check_password)(&username,&password) {
 				//success
 				connection.write(b"235 Authentication successfull\r\n")?;
+				println!("authentication successfull");
 				authenticated = true;
 			}else {
 				//epic authentication fail
 				connection.write(b"535 Bad username or password\r\n")?;
+				eprintln!("authentication failed");
 				continue;
 			}
 		}else if line.to_ascii_uppercase().starts_with("STARTTLS") && config.tls_enabled {
