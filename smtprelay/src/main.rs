@@ -37,7 +37,7 @@ fn main() -> ExitCode {
 		print_help();
 		return ExitCode::SUCCESS
 	}
-	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(9185);
+	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(587);
 	let db_path = args.get_value('f').unwrap_or(String::from("/var/mail/outbound_queue.db"));
 	//24 hours
 	let retry_window_string = args.get_value('r').and_then(|w| w.parse().ok()).unwrap_or(60*60*24);
