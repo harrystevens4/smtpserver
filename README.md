@@ -9,7 +9,7 @@ What it is, however is small, local and modular, meaning you just set up the ser
 ## Manual
 
 You can run `smtpserver` and `pop3server` manually if you like, but they will require root as they bind to low port numbers.
-For `smtprelay`, you will need to run `smtprelay listen` and `smtprelay send` as seperate processes.
+For `smtprelay`, you will need to run `smtprelay listen` and `smtprelay send` as separate processes.
 
 ## Docker compose
 
@@ -33,7 +33,7 @@ pop3server is a server for accessing mail stored by the smtpserver program. It p
 
 # smtprelay
 
-smtprelay is a relay server that accepts outbound mail on port `9185` and forwards it to the correct destination. It operates in 2 different modes, with a listen and a send mode. When in listening mode, it will receive emails on port `9185` and queue them at `/var/mail/outbound_queue.db`. when operating in send mode, it attempts to send all the queued emails stored in the database, and delete them once they have been delivered. For running it, you will need to run 2 processes with one running `smtprelay listen` and one running `smtprelay send`.
+smtprelay is a relay server that accepts outbound mail on port `587` and forwards it to the correct destination. It operates in 2 different modes, with a listen and a send mode. When in listening mode, it will receive emails on port `587` and queue them at `/var/mail/outbound_queue.db`. When operating in send mode, it attempts to send all the queued emails stored in the database, and delete them once they have been delivered. For running it, you will need to run 2 processes with one running `smtprelay listen` and one running `smtprelay send`. It also has TLS support, with a similar command line interface to pop3server. For listening mode, you will need to enable TLS `-t` and specify the certificate and private key files `-c cert-file.pem -k key-file.pem`. For sending mode, it supports STARTTLS and will try to use it if available.
 
 # Accessing mail store programmatically
 
@@ -82,3 +82,4 @@ Notes:
  - `email_id` set to `ON DELETE RESTRICT` so an email cannot be deleted if a recipient is queued for it
  - users table is not connected to any others
  - users table follows the same format as that of smtpserver
+ - email address does not need to be an email address e.g. `paul` rather than `paul@example.com`
