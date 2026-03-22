@@ -11,6 +11,8 @@ use rustls::{StreamOwned,ServerConfig,ServerConnection};
 use rustls_pki_types::{CertificateDer,PrivateKeyDer};
 use rustls_pki_types::pem::PemObject;
 
+use sha256;
+
 pub trait ReadWrite: Read + Write + Any {}
 impl ReadWrite for TcpStream {}
 impl ReadWrite for StreamOwned<ServerConnection,TcpStream> {}
@@ -66,7 +68,7 @@ pub fn pop3_authenticate<
 								}
 							};
 						},
-						Err(mut tcp_stream) => {
+						Err(tcp_stream) => {
 							//====== already using tls ======
 							//put the old connection back
 							connection = tcp_stream
@@ -125,13 +127,43 @@ pub fn pop3_process_transactions(connection: &mut dyn ReadWrite, mail_db: &MailD
 		if let Some(command) = split_line.next(){
 			match command.to_ascii_uppercase().as_str(){
 				"STAT" => {
-					let maildrop = format!("+OK {} {}\r\n",maildrop.len(),1024);
+					let maildrop = dbg!{format!("+OK {} {}\r\n",maildrop.len(),1024)};
 					connection.write(&maildrop.into_bytes())?;
 				},
 				"NOOP" => {
 					connection.write(b"+OK\r\n")?;
 				}
-				"UIDL" | "LIST" => {
+				"UIDL" => {
+					if let Some(arg) = split_line.next(){
+						//specific mail
+						let Ok(mail_id) = arg.parse() else {
+							connection.write(b"-ERR Could not parse\r\n")?;
+							continue;
+						};
+						if let Some(email) = maildrop.iter().find(|m| m.id() == mail_id){
+							let unique_id = sha256::digest(
+								email.data() + &email.timestamp().to_string()
+							);
+							let listing = format!("+OK {} {}\r\n",email.id(),unique_id);
+							connection.write(&listing.into_bytes())?;
+						}else {
+							connection.write(b"-ERR Bad mail id\r\n")?;
+							continue;
+						}
+					}else{
+						//all mail
+						connection.write(b"+OK\r\n")?;
+						for email in &maildrop {
+							let unique_id = sha256::digest(
+								email.data() + &email.timestamp().to_string()
+							);
+							let listing = format!("{} {}\r\n",email.id(),unique_id);
+							connection.write(&listing.into_bytes())?;
+						}
+						connection.write(b".\r\n")?;
+					}
+				},
+				"LIST" => {
 					if let Some(arg) = split_line.next(){
 						//specific mail
 						let Ok(mail_id) = arg.parse() else {
