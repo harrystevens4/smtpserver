@@ -55,17 +55,8 @@ impl Default for SMTPServerConfig {
 }
 
 pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> Result<Vec<Email>,Box<dyn Error>>{
-	//====== handshake ======
-	let mut capabilities = vec![];
-	//enable auth if required
-	if config.auth_required {
-		capabilities.push("AUTH LOGIN");
-	}
-	//enable tls if supported
-	if config.tls_enabled {
-		capabilities.push("STARTTLS")
-	}
-	smtp_handshake(&mut connection,&capabilities)?;
+	//====== anounce existence ======
+	connection.write(b"220 smtpserver at your service\r\n")?;
 	//====== process mail ======
 	//box connection (can be upgraded from TcpStream to tls Stream)
 	let mut connection = Box::new(connection) as Box<dyn ReadWrite>;
@@ -85,37 +76,12 @@ pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> R
 			emails.push(email);
 			//mail has been stored
 			connection.write(b"250 Ok\r\n")?;
-		}else {break}
+		}else {break} //email is None so QUIT command was given
 	}
 	let _ = connection.write(b"221 Ending transaction\r\n");
 	//====== close connection ======
 	drop(connection);
 	Ok(emails)
-}
-
-fn smtp_handshake(connection: &mut TcpStream, capabilities: &[&str]) -> io::Result<()>{
-	//ack connection
-	connection.write(b"220 smtpserver at your service\r\n")?;
-	//3 attempts to send a valid handshake
-	for _ in 0..2 {
-		//wait for greeting
-		let buffer = readline(connection)?;
-		//verify greeting
-		if buffer.to_ascii_uppercase().starts_with("HELO"){
-			connection.write(b"250 Ok\r\n")?;
-			return Ok(());
-		//extended hello
-		}else if buffer.to_ascii_uppercase().starts_with("EHLO"){
-			//multi line response (250 then '-' except last with 250 then ' ')
-			let mut capabilities_copy = vec!["smtpserver"];
-			capabilities_copy.extend(capabilities);
-			send_multipart(connection,&capabilities_copy,"250")?;
-			return Ok(());
-		}else {
-			connection.write(b"502 Unsupported\r\n")?;
-		}
-	}
-	Err(io::Error::other("malformed greeting in request"))
 }
 
 fn send_multipart(stream: &mut dyn Write, items: &[&str], code: &str) -> io::Result<()>{
@@ -141,7 +107,24 @@ fn smtp_receive_email(mut connection: Box<dyn ReadWrite>, config: &SMTPServerCon
 		let line = dbg!{readline(&mut connection)?};
 		if line.to_ascii_uppercase().starts_with("QUIT"){
 			//====== end of mail ======
-			return Err(io::Error::from(io::ErrorKind::Interrupted))?;
+			return Ok((connection,None))
+		}else if line.to_ascii_uppercase().starts_with("HELO"){
+			//====== HELO ======
+			connection.write(b"250 Ok\r\n")?;
+		}else if line.to_ascii_uppercase().starts_with("EHLO"){
+			//====== extended hello EHLO ======
+			//multi line response (250 then '-' except last with 250 then ' ')
+			//====== capabilities ======
+			let mut capabilities = vec!["smtpserver"]; //our fqdn (im cheating here)
+			//enable auth if required
+			if config.auth_required {
+				capabilities.push("AUTH LOGIN");
+			}
+			//enable tls if supported
+			if config.tls_enabled {
+				capabilities.push("STARTTLS")
+			}
+			send_multipart(&mut connection,&capabilities,"250")?;
 		}else if line.to_ascii_uppercase().starts_with("MAIL FROM"){
 			//check authentication status
 			if config.auth_required && !authenticated {
@@ -231,9 +214,10 @@ fn smtp_receive_email(mut connection: Box<dyn ReadWrite>, config: &SMTPServerCon
 			match (connection as Box<dyn Any>).downcast::<TcpStream>() {
 				Ok(mut tcp_stream) => {
 					//stream is a plain TcpStream
-					tcp_stream.write(b"220 Ready to start TLS")?;
+					tcp_stream.write(b"220 Ready to start TLS\r\n")?;
 					//move connection back outside this scope
 					connection = Box::new(server_tls_upgrade(*tcp_stream,config)?);
+					println!("upgrade successfull");
 				},
 				Err(stream) => {
 					//stream already a tls connection
