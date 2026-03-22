@@ -15,16 +15,27 @@ impl ReadWrite for TcpStream {}
 impl ReadWrite for StreamOwned<ClientConnection,TcpStream> {}
 
 pub struct SMTPServerConfig {
-	pub auth_required: bool,
-	pub check_user: fn(&str) -> bool, //takes username
-	pub check_password: fn(&str,&str) -> bool, //takes username,password
+	auth_required: bool,
+	check_user: Box<dyn Fn(&str) -> bool>, //takes username
+	check_password: Box<dyn Fn(&str,&str) -> bool>, //takes username,password
+}
+impl SMTPServerConfig {
+	pub fn set_auth_required(&mut self, state: bool){
+		self.auth_required = state;
+	}
+	pub fn set_check_user_func(&mut self, func: impl Fn(&str) -> bool + 'static){
+		self.check_user = Box::new(func);
+	}
+	pub fn set_check_password_func(&mut self, func: impl Fn(&str,&str) -> bool + 'static){
+		self.check_password = Box::new(func);
+	}
 }
 impl Default for SMTPServerConfig {
 	fn default() -> Self {
 		SMTPServerConfig {
 			auth_required: false,
-			check_user: |_| true,
-			check_password: |_,_| true,
+			check_user: Box::new(|_| true),
+			check_password: Box::new(|_,_| true),
 		}
 	}
 }
