@@ -127,7 +127,11 @@ pub fn pop3_process_transactions(connection: &mut dyn ReadWrite, mail_db: &MailD
 		if let Some(command) = split_line.next(){
 			match command.to_ascii_uppercase().as_str(){
 				"STAT" => {
-					let maildrop = dbg!{format!("+OK {} {}\r\n",maildrop.len(),1024)};
+					let mut maildrop_len = 0;
+					for email in &maildrop {
+						maildrop_len += email.data().len();
+					}
+					let maildrop = format!("+OK {} {}\r\n",maildrop.len(),maildrop_len);
 					connection.write(&maildrop.into_bytes())?;
 				},
 				"NOOP" => {
@@ -143,7 +147,7 @@ pub fn pop3_process_transactions(connection: &mut dyn ReadWrite, mail_db: &MailD
 						if let Some(email) = maildrop.iter().find(|m| m.id() == mail_id){
 							let unique_id = sha256::digest(
 								email.data() + &email.timestamp().to_string()
-							);
+							)[..20].to_string();
 							let listing = format!("+OK {} {}\r\n",email.id(),unique_id);
 							connection.write(&listing.into_bytes())?;
 						}else {
@@ -156,7 +160,7 @@ pub fn pop3_process_transactions(connection: &mut dyn ReadWrite, mail_db: &MailD
 						for email in &maildrop {
 							let unique_id = sha256::digest(
 								email.data() + &email.timestamp().to_string()
-							);
+							)[..20].to_string();
 							let listing = format!("{} {}\r\n",email.id(),unique_id);
 							connection.write(&listing.into_bytes())?;
 						}
