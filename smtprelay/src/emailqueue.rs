@@ -4,10 +4,11 @@ use std::time::{SystemTime,UNIX_EPOCH,Duration};
 use std::convert::{From,Into};
 use std::path::Path;
 use rusqlite::{Connection,params,Error as SQLError,OptionalExtension};
+use sha256;
 use std::error::Error;
 use std::io;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct QueuedEmail {
 	email: Email,
 	time_queued: SystemTime,
@@ -157,6 +158,26 @@ impl EmailQueue {
 			WHERE id = ?
 		",[id]);
 		Ok(())
+	}
+	pub fn verify_username(&self, username: &str) -> bool {
+		//number of matching email addresses
+		let matching_user_count = self.database.query_one("
+			SELECT COUNT(email_address)
+			FROM users
+			WHERE email_address = ?
+		",[username],|row| row.get(0)).unwrap_or(0);
+		if matching_user_count >= 1 {true} else {false}
+	}
+	pub fn verify_password(&self, username: &str, password: &str) -> bool {
+		//hash password
+		let hashed_password = sha256::digest(password);
+		//number of matching accounts with that username and password
+		let matching_user_count = self.database.query_one("
+			SELECT COUNT(email_address)
+			FROM users
+			WHERE email_address = ? AND password = ?
+		",[username,&hashed_password],|row| row.get(0)).unwrap_or(0);
+		if matching_user_count >= 1 {true} else {false}
 	}
 }
 
