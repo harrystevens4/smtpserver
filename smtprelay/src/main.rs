@@ -26,12 +26,16 @@ enum FailureType<E> {
 }
 
 fn main() -> ExitCode {
+	let mut config = SMTPServerConfig::default();
 	//====== process command line arguments ======
 	let args = Args::gather(&[
-		('h', Some("help"),         false ),
-		('p', Some("port"),         true  ),
-		('f', Some("db-path"),      true  ),
-		('r', Some("retry-window"), true  ),
+		('h', Some("help"),           false),
+		('p', Some("port"),           true ),
+		('f', Some("db-path"),        true ),
+		('r', Some("retry-window"),   true ),
+		('c', Some("tls-certs-file"), true ),
+		('k', Some("tls-private-key"),true ),
+		('t', Some("enable-tls"),     false),
 	]);
 	if args.has('h') {
 		print_help();
@@ -39,6 +43,20 @@ fn main() -> ExitCode {
 	}
 	let port = args.get_value('p').and_then(|p| p.parse().ok()).unwrap_or(587);
 	let db_path = args.get_value('f').unwrap_or(String::from("/var/mail/outbound_queue.db"));
+	//tls enabled
+	if args.has('t') {
+		let Some(certs_file) = args.get_value('c')
+		else{
+			eprintln!("certs file must be provided to enable tls");
+			return ExitCode::FAILURE;
+		};
+		let Some(private_key_file) = args.get_value('k')
+		else{
+			eprintln!("private key file must be provided to enable tls");
+			return ExitCode::FAILURE;
+		};
+		config.configure_tls(&certs_file,&private_key_file);
+	}
 	//24 hours
 	let retry_window_string = args.get_value('r').and_then(|w| w.parse().ok()).unwrap_or(60*60*24);
 	let retry_window = Duration::new(retry_window_string,0);
@@ -53,7 +71,7 @@ fn main() -> ExitCode {
 	//====== choose whether to receive or send emails ======
 	let mode = args.others().into_iter().map(|o| o.as_str()).next();
 	match mode {
-		Some("listen") => relay_recv(raw_queue,port),
+		Some("listen") => relay_recv(raw_queue,port,config),
 		Some("send") => relay_send(raw_queue,retry_window),
 		Some(_) => {
 			eprintln!("Unrecognised mode.");
@@ -150,11 +168,10 @@ fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>
 	Ok(())
 }
 
-fn relay_recv(queue: EmailQueue, port: u16) -> ExitCode {
+fn relay_recv(queue: EmailQueue, port: u16, mut config: SMTPServerConfig) -> ExitCode {
 	//====== configure server ======
 	//move the queue into an Rc
 	let queue = Rc::new(queue);
-	let mut config = SMTPServerConfig::default();
 	config.set_auth_required(true);
 	//since rustqlite::Connection does not implement clone
 	//we can only use one copy of the queue and pass it around

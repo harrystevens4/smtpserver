@@ -1,23 +1,29 @@
 use maildb::Email;
-use std::net::{TcpStream,Shutdown};
+use std::net::{TcpStream};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
 use std::io;
 use std::default::Default;
+use std::any::Any;
 //use std::time::{Duration};
 
-use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection};
-use rustls_pki_types::{ServerName};
+use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection,ServerConfig,ServerConnection};
+use rustls_pki_types::{ServerName,PrivateKeyDer,CertificateDer};
+use rustls_pki_types::pem::PemObject;
 use base64::prelude::*;
 
-trait ReadWrite: Read + Write {}
+trait ReadWrite: Read + Write + Any {}
 impl ReadWrite for TcpStream {}
 impl ReadWrite for StreamOwned<ClientConnection,TcpStream> {}
+impl ReadWrite for StreamOwned<ServerConnection,TcpStream> {}
 
 pub struct SMTPServerConfig {
 	auth_required: bool,
 	check_user: Box<dyn Fn(&str) -> bool>, //takes username
 	check_password: Box<dyn Fn(&str,&str) -> bool>, //takes username,password
+	tls_enabled: bool,
+	tls_certs: Option<String>, //both file paths
+	tls_private_key: Option<String>,
 }
 impl SMTPServerConfig {
 	pub fn set_auth_required(&mut self, state: bool){
@@ -29,6 +35,11 @@ impl SMTPServerConfig {
 	pub fn set_check_password_func(&mut self, func: impl Fn(&str,&str) -> bool + 'static){
 		self.check_password = Box::new(func);
 	}
+	pub fn configure_tls(&mut self, certs_file_path: &str, private_key_file_path: &str){
+		self.tls_certs = Some(certs_file_path.to_string());
+		self.tls_private_key = Some(private_key_file_path.to_string());
+		self.tls_enabled = true;
+	}
 }
 impl Default for SMTPServerConfig {
 	fn default() -> Self {
@@ -36,6 +47,9 @@ impl Default for SMTPServerConfig {
 			auth_required: false,
 			check_user: Box::new(|_| true),
 			check_password: Box::new(|_,_| true),
+			tls_enabled: false,
+			tls_certs: None,
+			tls_private_key: None,
 		}
 	}
 }
@@ -47,26 +61,35 @@ pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> R
 	if config.auth_required {
 		capabilities.push("AUTH LOGIN");
 	}
+	//enable tls if supported
+	if config.tls_enabled {
+		capabilities.push("STARTTLS")
+	}
 	smtp_handshake(&mut connection,&capabilities)?;
 	//====== process mail ======
+	//box connection (can be upgraded from TcpStream to tls Stream)
+	let mut connection = Box::new(connection) as Box<dyn ReadWrite>;
 	let mut emails = vec![];
 	//multiple messages, one connection
 	loop {
-		let email = match smtp_receive_email(&mut connection,config){
-			//no more emails
-			Err(err) if err.kind() == ErrorKind::ConnectionReset => {break},
+		//ownership issues means we have to pass the connection back and fourth
+		//since a connection can be upgraded to tls
+		let (returned_connection,email) = match smtp_receive_email(connection,config){
 			//error
-			Err(e) => return Err(Box::new(e)),
+			Err(e) => return Err(e),
 			//successful receipt of new email
-			Ok(email) => email,
+			Ok((connection,email)) => (connection,email),
 		};
-		emails.push(email);
-		//mail has been stored
-		connection.write(b"250 Ok\r\n")?;
+		connection = returned_connection;
+		if let Some(email) = email {
+			emails.push(email);
+			//mail has been stored
+			connection.write(b"250 Ok\r\n")?;
+		}else {break}
 	}
 	let _ = connection.write(b"221 Ending transaction\r\n");
-	//close connection
-	connection.shutdown(Shutdown::Both)?;
+	//====== close connection ======
+	drop(connection);
 	Ok(emails)
 }
 
@@ -108,17 +131,17 @@ fn send_multipart(stream: &mut dyn Write, items: &[&str], code: &str) -> io::Res
 	Ok(())
 }
 
-fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> io::Result<Email>{
+fn smtp_receive_email(mut connection: Box<dyn ReadWrite>, config: &SMTPServerConfig) -> Result<(Box<dyn ReadWrite>,Option<Email>),Box<dyn Error>>{
 	//=> based off RFC 5321 <=//
 	let mut senders: Vec<String> = vec![];
 	let mut recipients: Vec<String> = vec![];
 	let mut body = String::new();
 	let mut authenticated = false;
 	loop {
-		let line = readline(connection)?;
+		let line = dbg!{readline(&mut connection)?};
 		if line.to_ascii_uppercase().starts_with("QUIT"){
 			//====== end of mail ======
-			return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+			return Err(io::Error::from(io::ErrorKind::Interrupted))?;
 		}else if line.to_ascii_uppercase().starts_with("MAIL FROM"){
 			//check authentication status
 			if config.auth_required && !authenticated {
@@ -168,7 +191,7 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 			connection.write(b"354 Ok\r\n")?;
 			//receive all lines of the body
 			loop {
-				let body_line = readline(connection)?;
+				let body_line = readline(&mut connection)?;
 				//end of body
 				if body_line == "." {break}
 				//store the line
@@ -181,14 +204,14 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 			//====== authentication ======
 			//ask for username
 			connection.write(b"334 VXNlcm5hbWU6\r\n")?;
-			let Ok(Ok(username)) = BASE64_STANDARD.decode(readline(connection)?).map(String::from_utf8)
+			let Ok(Ok(username)) = BASE64_STANDARD.decode(readline(&mut connection)?).map(String::from_utf8)
 			else {
 				connection.write(b"501 Could not base64 decode username\r\n")?;
 				continue;
 			};
 			//ask for password
 			connection.write(b"334 UGFzc3dvcmQ6\r\n")?;
-			let Ok(Ok(password)) = BASE64_STANDARD.decode(readline(connection)?).map(String::from_utf8)
+			let Ok(Ok(password)) = BASE64_STANDARD.decode(readline(&mut connection)?).map(String::from_utf8)
 			else {
 				connection.write(b"501 Could not base64 decode password\r\n")?;
 				continue;
@@ -203,6 +226,26 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 				connection.write(b"535 Bad username or password\r\n")?;
 				continue;
 			}
+		}else if line.to_ascii_uppercase().starts_with("STARTTLS") && config.tls_enabled {
+			//====== upgrade connection to tls ======
+			match (connection as Box<dyn Any>).downcast::<TcpStream>() {
+				Ok(mut tcp_stream) => {
+					//stream is a plain TcpStream
+					tcp_stream.write(b"220 Ready to start TLS")?;
+					//move connection back outside this scope
+					connection = Box::new(server_tls_upgrade(*tcp_stream,config)?);
+				},
+				Err(stream) => {
+					//stream already a tls connection
+					let mut tls_stream = stream
+						.downcast::<StreamOwned<ServerConnection,TcpStream>>()
+						.map_err(|_| io::Error::other("Box downcast failed"))?;
+					tls_stream.write(b"503 TLS already active")?;
+					//move connection back
+					connection = tls_stream as Box<dyn ReadWrite>;
+					continue;
+				}
+			}
 		}else {
 			//====== command error ======
 			connection.write(b"500 Unknown command\r\n")?;
@@ -210,8 +253,13 @@ fn smtp_receive_email(connection: &mut TcpStream, config: &SMTPServerConfig) -> 
 		}
 	}
 	//====== construct the new email ======
-	let email = Email::new(senders,recipients,body);
-	Ok(email)
+	//is it empty?
+	if senders.len() == 0 || recipients.len() == 0 {
+		Ok((connection,None))
+	}else {
+		let email = Email::new(senders,recipients,body);
+		Ok((connection,Some(email)))
+	}
 }
 
 //return a list of capabilities
@@ -264,7 +312,7 @@ pub fn send_emails(address: &str, emails: Vec<Email>) -> Result<(),Box<dyn Error
 		if !line.starts_with("2"){
 			return Err(io::Error::other(format!("failed STARTTLS: {}",line)))?;
 		}
-		boxed_stream = Box::new(tls_upgrade(address,initial_connection)?);
+		boxed_stream = Box::new(client_tls_upgrade(address,initial_connection)?);
 		println!("==> upgrade successfull");
 	}
 	//makes my life easier
@@ -341,7 +389,7 @@ fn readline(stream: &mut dyn Read) -> io::Result<String> {
 	)
 }
 
-fn tls_upgrade(destination: &str, connection: TcpStream) -> Result<StreamOwned<ClientConnection,TcpStream>,Box<dyn Error>> {
+fn client_tls_upgrade(destination: &str, connection: TcpStream) -> Result<StreamOwned<ClientConnection,TcpStream>,Box<dyn Error>> {
 	let root_store = RootCertStore {
 		roots: webpki_roots::TLS_SERVER_ROOTS.into(),
 	};
@@ -351,4 +399,23 @@ fn tls_upgrade(destination: &str, connection: TcpStream) -> Result<StreamOwned<C
 	let name = ServerName::try_from(destination.to_string())?;
 	let tls = ClientConnection::new(config.into(),name)?;
 	Ok(StreamOwned::new(tls,connection))
+}
+
+fn server_tls_upgrade(connection: TcpStream, config: &SMTPServerConfig) -> Result<StreamOwned<ServerConnection,TcpStream>,Box<dyn Error>> {
+	println!("starting tls upgrade...");
+	//====== verify certificates and private key present ======
+	let Some(ref certs_file) = config.tls_certs
+		else {Err(io::Error::other("no tls certificate provided"))?};
+	let Some(ref private_key_file) = config.tls_private_key
+		else {Err(io::Error::other("no tls private key provided"))?};
+	let certs = CertificateDer::pem_file_iter(certs_file)?
+		.filter_map(|c| c.ok())
+		.collect();
+	let private_key = PrivateKeyDer::from_pem_file(private_key_file)?;
+	//====== build the config ======
+	let config = ServerConfig::builder()
+		.with_no_client_auth()
+		.with_single_cert(certs,private_key)?;
+	//return final stream
+	Ok(StreamOwned::new(ServerConnection::new(config.into())?,connection))
 }
