@@ -117,10 +117,10 @@ impl MailDB {
 	}
 	pub fn check_user_exists(&self, username: &str) -> Result<bool,sqlError> {
 		self.db.query_row("
-			SELECT 1
+			SELECT COUNT(*)
 			FROM users
 			WHERE email_address = ?
-		",[username], |row| row.get(0).map(bool::from))
+		",[username], |row| row.get(0).map(|c: i64| c >= 1))
 	}
 	pub fn verify_user_password(&self, username: &str, password: &str) -> Result<bool,sqlError> {
 		self.db.query_row("
