@@ -122,137 +122,151 @@ fn smtp_receive_email(mut connection: Box<dyn ReadWrite>, config: &SMTPServerCon
 	let mut authenticated = false;
 	loop {
 		let line = dbg!{readline(&mut connection)?};
-		if line.to_ascii_uppercase().starts_with("QUIT"){
-			//====== end of mail ======
-			return Ok((connection,None))
-		}else if line.to_ascii_uppercase().starts_with("HELO"){
-			//====== HELO ======
-			connection.write(b"250 Ok\r\n")?;
-		}else if line.to_ascii_uppercase().starts_with("EHLO"){
-			//====== extended hello EHLO ======
-			//multi line response (250 then '-' except last with 250 then ' ')
-			//====== capabilities ======
-			let mut capabilities = vec!["smtpserver"]; //our fqdn (im cheating here)
-			//enable auth if required
-			if config.auth_required {
-				capabilities.push("AUTH LOGIN");
-			}
-			//enable tls if supported
-			if config.tls_enabled {
-				capabilities.push("STARTTLS")
-			}
-			send_multipart(&mut connection,&capabilities,"250")?;
-		}else if line.to_ascii_uppercase().starts_with("MAIL FROM"){
-			//check authentication status
-			if config.auth_required && !authenticated {
-				connection.write(b"530 Authentication required\r\n")?;
-				continue;
-			}
-			//====== senders ======
-			let Some(sender) = line.split_once(':')
- 				// extract address from between < and > brackets
-				.map(|(_,x)| x.split_once('<')).flatten()
-				.map(|(_,x)| x.split_once('>')).flatten()
-				.map(|(x,_)| x)
-			else {
-				connection.write(b"501 Syntax error\r\n")?;
-				continue;
-			};
-			senders.push(sender.to_string());
-			//send positive ack
-			connection.write(b"250 Ok\r\n")?;
-		}else if line.to_ascii_uppercase().starts_with("RCPT TO"){
-			//check authentication status
-			if config.auth_required && !authenticated {
-				connection.write(b"530 Authentication required\r\n")?;
-				continue;
-			}
-			//====== recipients ======
-			// extract address from between < and > brackets 
-			let Some(recipient) = line.split_once(':')
-				.map(|(_,x)| x.split_once('<')).flatten()
-				.map(|(_,x)| x.split_once('>')).flatten()
-				.map(|(x,_)| x)
-			else {
-				connection.write(b"501 Syntax error\r\n")?;
-				continue;
-			};
-			recipients.push(recipient.to_string());
-			//send positive ack
-			connection.write(b"250 Ok\r\n")?;
-		}else if line.to_ascii_uppercase().starts_with("DATA"){
-			//check authentication status
-			if config.auth_required && !authenticated {
-				connection.write(b"530 Authentication required\r\n")?;
-				continue;
-			}
-			//====== email body ======
-			//send intermediate reply
-			connection.write(b"354 Ok\r\n")?;
-			//receive all lines of the body
-			loop {
-				let body_line = readline(&mut connection)?;
-				//end of body
-				if body_line == "." {break}
-				//store the line
-				body += &(body_line + "\n");
-			}
-			body = body.trim_end_matches("\n").to_string();
-			//exit
-			break;
-		}else if line.to_ascii_uppercase().starts_with("AUTH LOGIN"){
-			//====== authentication ======
-			//ask for username
-			connection.write(b"334 VXNlcm5hbWU6\r\n")?;
-			let Ok(Ok(username)) = BASE64_STANDARD.decode(readline(&mut connection)?).map(String::from_utf8)
-			else {
-				connection.write(b"501 Could not base64 decode username\r\n")?;
-				continue;
-			};
-			//ask for password
-			connection.write(b"334 UGFzc3dvcmQ6\r\n")?;
-			let Ok(Ok(password)) = BASE64_STANDARD.decode(readline(&mut connection)?).map(String::from_utf8)
-			else {
-				connection.write(b"501 Could not base64 decode password\r\n")?;
-				continue;
-			};
-			//verify credentials
-			if (config.check_user)(&username) && (config.check_password)(&username,&password) {
-				//success
-				connection.write(b"235 Authentication successfull\r\n")?;
-				println!("authentication successfull");
-				authenticated = true;
-			}else {
-				//epic authentication fail
-				connection.write(b"535 Bad username or password\r\n")?;
-				eprintln!("authentication failed");
-				continue;
-			}
-		}else if line.to_ascii_uppercase().starts_with("STARTTLS") && config.tls_enabled {
-			//====== upgrade connection to tls ======
-			match (connection as Box<dyn Any>).downcast::<TcpStream>() {
-				Ok(mut tcp_stream) => {
-					//stream is a plain TcpStream
-					tcp_stream.write(b"220 Ready to start TLS\r\n")?;
-					//move connection back outside this scope
-					connection = Box::new(server_tls_upgrade(*tcp_stream,config)?);
-					println!("upgrade successfull");
-				},
-				Err(stream) => {
-					//stream already a tls connection
-					let mut tls_stream = stream
-						.downcast::<StreamOwned<ServerConnection,TcpStream>>()
-						.map_err(|_| io::Error::other("Box downcast failed"))?;
-					tls_stream.write(b"503 TLS already active")?;
-					//move connection back
-					connection = tls_stream as Box<dyn ReadWrite>;
+		let line_uppercase = line.to_ascii_uppercase();
+		let (command,arg) = line_uppercase
+			.split_once(' ')
+			.unwrap_or((&line,""));
+		match command {
+			"QUIT" => {
+				//====== end of mail ======
+				return Ok((connection,None))
+			},
+			"HELO" => {
+				//====== HELO ======
+				connection.write(b"250 Ok\r\n")?;
+			},
+			"EHLO" => {
+				//====== extended hello EHLO ======
+				//multi line response (250 then '-' except last with 250 then ' ')
+				//====== capabilities ======
+				let mut capabilities = vec!["smtpserver"]; //our fqdn (im cheating here)
+				//enable auth if required
+				if config.auth_required {
+					capabilities.push("AUTH LOGIN");
+				}
+				//enable tls if supported
+				if config.tls_enabled {
+					capabilities.push("STARTTLS")
+				}
+				send_multipart(&mut connection,&capabilities,"250")?;
+			},
+			"MAIL" if arg.starts_with("FROM") => {
+				//check authentication status
+				if config.auth_required && !authenticated {
+					connection.write(b"530 Authentication required\r\n")?;
 					continue;
 				}
+				//====== senders ======
+				let Some(sender) = line.split_once(':')
+					// extract address from between < and > brackets
+					.map(|(_,x)| x.split_once('<')).flatten()
+					.map(|(_,x)| x.split_once('>')).flatten()
+					.map(|(x,_)| x)
+				else {
+					connection.write(b"501 Syntax error\r\n")?;
+					continue;
+				};
+				senders.push(sender.to_string());
+				//send positive ack
+				connection.write(b"250 Ok\r\n")?;
+			},
+			"RCPT" if arg.starts_with("TO") => {
+				//check authentication status
+				if config.auth_required && !authenticated {
+					connection.write(b"530 Authentication required\r\n")?;
+					continue;
+				}
+				//====== recipients ======
+				// extract address from between < and > brackets 
+				let Some(recipient) = line.split_once(':')
+					.map(|(_,x)| x.split_once('<')).flatten()
+					.map(|(_,x)| x.split_once('>')).flatten()
+					.map(|(x,_)| x)
+				else {
+					connection.write(b"501 Syntax error\r\n")?;
+					continue;
+				};
+				recipients.push(recipient.to_string());
+				//send positive ack
+				connection.write(b"250 Ok\r\n")?;
+			},
+			"DATA" => {
+				//check authentication status
+				if config.auth_required && !authenticated {
+					connection.write(b"530 Authentication required\r\n")?;
+					continue;
+				}
+				//====== email body ======
+				//send intermediate reply
+				connection.write(b"354 Ok\r\n")?;
+				//receive all lines of the body
+				loop {
+					let body_line = readline(&mut connection)?;
+					//end of body
+					if body_line == "." {break}
+					//store the line
+					body += &(body_line + "\n");
+				}
+				body = body.trim_end_matches("\n").to_string();
+				//exit
+				break;
+			},
+			"AUTH" if arg == "LOGIN" => {
+				//====== authentication ======
+				//ask for username
+				connection.write(b"334 VXNlcm5hbWU6\r\n")?;
+				let Ok(Ok(username)) = BASE64_STANDARD.decode(readline(&mut connection)?).map(String::from_utf8)
+				else {
+					connection.write(b"501 Could not base64 decode username\r\n")?;
+					continue;
+				};
+				//ask for password
+				connection.write(b"334 UGFzc3dvcmQ6\r\n")?;
+				let Ok(Ok(password)) = BASE64_STANDARD.decode(readline(&mut connection)?).map(String::from_utf8)
+				else {
+					connection.write(b"501 Could not base64 decode password\r\n")?;
+					continue;
+				};
+				//verify credentials
+				if (config.check_user)(&username) && (config.check_password)(&username,&password) {
+					//success
+					connection.write(b"235 Authentication successfull\r\n")?;
+					println!("authentication successfull");
+					authenticated = true;
+				}else {
+					//epic authentication fail
+					connection.write(b"535 Bad username or password\r\n")?;
+					eprintln!("authentication failed");
+					continue;
+				}
+			},
+			"STARTTLS" if config.tls_enabled => {
+				//====== upgrade connection to tls ======
+				match (connection as Box<dyn Any>).downcast::<TcpStream>() {
+					Ok(mut tcp_stream) => {
+						//stream is a plain TcpStream
+						tcp_stream.write(b"220 Ready to start TLS\r\n")?;
+						//move connection back outside this scope
+						connection = Box::new(server_tls_upgrade(*tcp_stream,config)?);
+						println!("upgrade successfull");
+					},
+					Err(stream) => {
+						//stream already a tls connection
+						let mut tls_stream = stream
+							.downcast::<StreamOwned<ServerConnection,TcpStream>>()
+							.map_err(|_| io::Error::other("Box downcast failed"))?;
+						tls_stream.write(b"503 TLS already active")?;
+						//move connection back
+						connection = tls_stream as Box<dyn ReadWrite>;
+						continue;
+					}
+				}
+			},
+			_ => {
+				//====== command error ======
+				connection.write(b"500 Unknown command\r\n")?;
+				continue;
 			}
-		}else {
-			//====== command error ======
-			connection.write(b"500 Unknown command\r\n")?;
-			continue;
 		}
 	}
 	//====== construct the new email ======
