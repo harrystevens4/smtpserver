@@ -5,18 +5,33 @@ use std::env;
 
 use std::net::{TcpListener};
 use std::process::ExitCode;
+use std::time::Duration;
+use std::io::ErrorKind;
+use std::io;
 
 fn main() -> ExitCode {
+	let mut config = SMTPServerConfig::default();
 	//====== process arguments ======
 	let cmd_args = Args::gather(&[
 		('h', Some("help"),    false),
 		('f', Some("db-path"), true ),
+		('T', Some("timeout"), true ),
 	]);
 	if cmd_args.has('h'){
 		print_help();
 		return ExitCode::SUCCESS;
 	}
+	//database path
 	let db_path = cmd_args.get_value('f').unwrap_or(String::from("/var/mail/mail.db"));
+	//socket timeout
+	if let Some(timeout_ms_str) = cmd_args.get_value('T') {
+		let Ok(timeout_ms) = timeout_ms_str.parse()
+		else {
+			eprintln!("Could not parse timeout");
+			return ExitCode::FAILURE;
+		};
+		config.set_timeout(Duration::from_millis(timeout_ms));
+	}
 	//====== database ======
 	println!("Connecting to mail database...");
 	let mail_db = match MailDB::open(&db_path){
@@ -45,10 +60,24 @@ fn main() -> ExitCode {
 			}
 		};
 		println!("========> new connection [{addr}] <========");
+		//set timeout
+		let _ = socket
+			.set_read_timeout(Some(config.timeout()))
+			.and_then(|_| socket.set_write_timeout(Some(config.timeout())))
+			.inspect_err(|e| eprintln!("Error setting socket timeout: {e}"));
 		//pass connection to receive function
-		let config = SMTPServerConfig::default();
 		let emails = match recieve_emails(socket,&config){
 			Ok(emails) => emails,
+			//WouldBlock is actualy connection timed out so lets make that clear
+			Err(e) if e.is::<io::Error>() => {
+				match e.downcast_ref().map(|e: &io::Error| e.kind()) {
+					Some(ErrorKind::WouldBlock) => {
+						eprintln!("Connection timed out");
+					},
+					_ => (),
+				}
+				continue;
+			},
 			Err(e) => {
 				eprintln!("receive_email: {}",e);
 				continue;
@@ -73,4 +102,5 @@ fn print_help(){
 	println!("Options:");
 	println!("	-h, --help    : Show this help message");
 	println!("	-f, --db-path : Path of the mail database to use");
+	println!("	-T, --timeout : Connection timeout in milliseconds");
 }

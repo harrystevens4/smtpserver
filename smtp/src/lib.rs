@@ -1,4 +1,5 @@
 use maildb::Email;
+use std::time::Duration;
 use std::net::{TcpStream};
 use std::error::Error;
 use std::io::{Read,Write,ErrorKind};
@@ -24,6 +25,7 @@ pub struct SMTPServerConfig {
 	tls_enabled: bool,
 	tls_certs: Option<String>, //both file paths
 	tls_private_key: Option<String>,
+	timeout: Duration,
 }
 impl SMTPServerConfig {
 	pub fn set_auth_required(&mut self, state: bool){
@@ -40,6 +42,10 @@ impl SMTPServerConfig {
 		self.tls_private_key = Some(private_key_file_path.to_string());
 		self.tls_enabled = true;
 	}
+	pub fn set_timeout(&mut self, timeout: Duration){
+		self.timeout = timeout;
+	}
+	pub fn timeout(&self) -> Duration {self.timeout.clone()}
 }
 impl Default for SMTPServerConfig {
 	fn default() -> Self {
@@ -50,6 +56,7 @@ impl Default for SMTPServerConfig {
 			tls_enabled: false,
 			tls_certs: None,
 			tls_private_key: None,
+			timeout: Duration::new(5,0), //5s
 		}
 	}
 }
