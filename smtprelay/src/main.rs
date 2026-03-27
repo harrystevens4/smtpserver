@@ -2,7 +2,7 @@ use maildb::Email;
 mod emailqueue;
 
 use crate::emailqueue::EmailQueue;
-use smtp::{send_emails,recieve_emails,SMTPServerConfig};
+use smtp::{send_emails,recieve_emails,SMTPServerConfig,SMTPClientConfig};
 use args::Args;
 
 use std::str::FromStr;
@@ -36,6 +36,7 @@ fn main() -> ExitCode {
 		('c', Some("tls-certs-file"), true ),
 		('k', Some("tls-private-key"),true ),
 		('t', Some("enable-tls"),     false),
+		('T', Some("timeout"),        false),
 	]);
 	if args.has('h') {
 		print_help();
@@ -57,6 +58,16 @@ fn main() -> ExitCode {
 		};
 		config.configure_tls(&certs_file,&private_key_file);
 	}
+	//socket timeout
+	if let Some(timeout_ms_str) = args.get_value('T') {
+		let Ok(timeout_ms) = timeout_ms_str.parse()
+		else {
+			eprintln!("Could not parse timeout");
+			return ExitCode::FAILURE;
+		};
+		server_config.set_timeout(Duration::from_millis(timeout_ms));
+		client_config.set_timeout(Duration::from_millis(timeout_ms));
+	}
 	//24 hours
 	let retry_window_string = args.get_value('r').and_then(|w| w.parse().ok()).unwrap_or(60*60*24);
 	let retry_window = Duration::new(retry_window_string,0);
@@ -71,8 +82,8 @@ fn main() -> ExitCode {
 	//====== choose whether to receive or send emails ======
 	let mode = args.others().into_iter().map(|o| o.as_str()).next();
 	match mode {
-		Some("listen") => relay_recv(raw_queue,port,config),
-		Some("send") => relay_send(raw_queue,retry_window),
+		Some("listen") => relay_recv(raw_queue,port,server_config),
+		Some("send") => relay_send(raw_queue,retry_window,client_config),
 		Some(_) => {
 			eprintln!("Unrecognised mode.");
 			ExitCode::FAILURE
@@ -148,7 +159,7 @@ fn relay_send(queue: EmailQueue, retry_window: Duration) -> ExitCode {
 	}
 }
 
-fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>>> {
+fn resolve_and_send_email(email: &Email, config: &SMTPClientConfig) -> Result<(),FailureType<Box<dyn Error>>> {
 	//====== send email to each recipient ======
 	//the same email is split into seperate items in the queue for each recipient
 	//so it is guaranteed to only have one recipient
@@ -163,7 +174,7 @@ fn resolve_and_send_email(email: &Email) -> Result<(),FailureType<Box<dyn Error>
 		return Err(FailureType::Permanent(Box::new(IoError::other("domain has no mx records"))));
 	};
 	//====== send the emails ======
-	send_emails(&mx_record,vec![email.clone()])
+	send_emails(&mx_record,vec![email.clone()],config)
 		.map_err(|e| FailureType::Temporary(e))?;
 	Ok(())
 }
@@ -197,6 +208,13 @@ fn relay_recv(queue: EmailQueue, port: u16, mut config: SMTPServerConfig) -> Exi
 		//ignore connection errors
 		let Ok((connection,address)) = listener.accept() else {continue};
 		println!("===> new outbound mail connection: {address}");
+		//set timeouts
+		if let Err(e) = connection
+			.set_read_timeout(Some(config.timeout()))
+			.and_then(|_| connection
+				.set_write_timeout(Some(config.timeout()))
+			) {eprintln!("Error setting connection timeout: {e}")}
+		//receive emails
 		let emails = match recieve_emails(connection,&config) {
 			Ok(emails) => emails,
 			Err(err) => {

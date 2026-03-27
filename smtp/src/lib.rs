@@ -28,6 +28,11 @@ pub struct SMTPServerConfig {
 	tls_private_key: Option<String>,
 	timeout: Duration,
 }
+
+pub struct SMTPClientConfig {
+	timeout: Duration,
+}
+
 impl SMTPServerConfig {
 	pub fn set_auth_required(&mut self, state: bool){
 		self.auth_required = state;
@@ -58,6 +63,20 @@ impl Default for SMTPServerConfig {
 			tls_certs: None,
 			tls_private_key: None,
 			timeout: Duration::new(5,0), //5s
+		}
+	}
+}
+
+impl SMTPClientConfig {
+	pub fn set_timeout(&mut self, timeout: Duration){
+		self.timeout = timeout;
+	}
+	pub fn timeout(&self) -> Duration {self.timeout.clone()}
+}
+impl Default for SMTPClientConfig {
+	fn default() -> Self {
+		SMTPClientConfig {
+			timeout: Duration::new(5,0),
 		}
 	}
 }
@@ -318,7 +337,7 @@ fn smtp_ehlo(stream: &mut dyn ReadWrite) -> Result<Vec<String>,Box<dyn Error>> {
 	Ok(capabilities)
 }
 
-pub fn send_emails(address: &str, emails: Vec<Email>) -> Result<(),Box<dyn Error>> {
+pub fn send_emails(address: &str, emails: Vec<Email>, config: &SMTPClientConfig) -> Result<(),Box<dyn Error>> {
 	//====== connect ======
 	let mut initial_connection = TcpStream::connect((address,25))?;
 	//====== handshake ======
