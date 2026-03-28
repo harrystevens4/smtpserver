@@ -7,6 +7,7 @@ use std::io;
 use std::default::Default;
 use std::any::Any;
 use std::mem;
+use std::marker::Send;
 //use std::time::{Duration};
 
 use rustls::{ClientConfig,StreamOwned,RootCertStore,ClientConnection,ServerConfig,ServerConnection};
@@ -21,8 +22,8 @@ impl ReadWrite for StreamOwned<ServerConnection,TcpStream> {}
 
 pub struct SMTPServerConfig {
 	auth_required: bool,
-	check_user: Box<dyn Fn(&str) -> bool>, //takes username
-	check_password: Box<dyn Fn(&str,&str) -> bool>, //takes username,password
+	check_user: Box<dyn Fn(&str) -> bool + Send + Sync>, //takes username
+	check_password: Box<dyn Fn(&str,&str) -> bool + Send + Sync>, //takes username,password
 	tls_enabled: bool,
 	tls_certs: Option<String>, //both file paths
 	tls_private_key: Option<String>,
@@ -37,10 +38,10 @@ impl SMTPServerConfig {
 	pub fn set_auth_required(&mut self, state: bool){
 		self.auth_required = state;
 	}
-	pub fn set_check_user_func(&mut self, func: impl Fn(&str) -> bool + 'static){
+	pub fn set_check_user_func(&mut self, func: impl Fn(&str) -> bool + Send + Sync + 'static){
 		self.check_user = Box::new(func);
 	}
-	pub fn set_check_password_func(&mut self, func: impl Fn(&str,&str) -> bool + 'static){
+	pub fn set_check_password_func(&mut self, func: impl Fn(&str,&str) -> bool + Send + Sync + 'static){
 		self.check_password = Box::new(func);
 	}
 	pub fn configure_tls(&mut self, certs_file_path: &str, private_key_file_path: &str){
