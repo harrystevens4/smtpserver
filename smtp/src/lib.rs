@@ -100,6 +100,10 @@ pub fn recieve_emails(mut connection: TcpStream, config: &SMTPServerConfig) -> R
 					if io_error.kind() == io::ErrorKind::UnexpectedEof {
 						return Ok(emails)
 					}
+					//client timed out (more understandable than Resource temprarily unavailable)
+					if io_error.kind() == io::ErrorKind::WouldBlock {
+						return Err(io::Error::other("client timed out"))?
+					}
 				}
 				return Err(e)
 			},
@@ -340,6 +344,8 @@ fn smtp_ehlo(stream: &mut dyn ReadWrite) -> Result<Vec<String>,Box<dyn Error>> {
 pub fn send_emails(address: &str, emails: Vec<Email>, config: &SMTPClientConfig) -> Result<(),Box<dyn Error>> {
 	//====== connect ======
 	let mut initial_connection = TcpStream::connect((address,25))?;
+	initial_connection.set_read_timeout(Some(config.timeout()))?;
+	initial_connection.set_write_timeout(Some(config.timeout()))?;
 	//====== handshake ======
 	let capabilities = smtp_ehlo(&mut initial_connection)?;
 	//====== attempt to upgrade connection if possible ======

@@ -26,7 +26,8 @@ enum FailureType<E> {
 }
 
 fn main() -> ExitCode {
-	let mut config = SMTPServerConfig::default();
+	let mut server_config = SMTPServerConfig::default();
+	let mut client_config = SMTPClientConfig::default();
 	//====== process command line arguments ======
 	let args = Args::gather(&[
 		('h', Some("help"),           false),
@@ -36,7 +37,7 @@ fn main() -> ExitCode {
 		('c', Some("tls-certs-file"), true ),
 		('k', Some("tls-private-key"),true ),
 		('t', Some("enable-tls"),     false),
-		('T', Some("timeout"),        false),
+		('T', Some("timeout"),        true),
 	]);
 	if args.has('h') {
 		print_help();
@@ -56,7 +57,7 @@ fn main() -> ExitCode {
 			eprintln!("private key file must be provided to enable tls");
 			return ExitCode::FAILURE;
 		};
-		config.configure_tls(&certs_file,&private_key_file);
+		server_config.configure_tls(&certs_file,&private_key_file);
 	}
 	//socket timeout
 	if let Some(timeout_ms_str) = args.get_value('T') {
@@ -83,7 +84,7 @@ fn main() -> ExitCode {
 	let mode = args.others().into_iter().map(|o| o.as_str()).next();
 	match mode {
 		Some("listen") => relay_recv(raw_queue,port,server_config),
-		Some("send") => relay_send(raw_queue,retry_window,client_config),
+		Some("send") => relay_send(raw_queue,retry_window,&client_config),
 		Some(_) => {
 			eprintln!("Unrecognised mode.");
 			ExitCode::FAILURE
@@ -102,13 +103,16 @@ fn print_help(){
 	println!("Operates in 2 modes. listen accepts emails and send relays them to their destination.");
 	println!("Requires both for full relay functionality (spawn as seperate processes)");
 	println!("Options:");
-	println!("	-h, --help         : Print this text");
-	println!("	-p, --port         : Port to listen on. Only works in listen mode");
-	println!("	-f, --db-path      : Path for the queue database. Seperate db to the smtpserver.");
-	println!("	-r, --retry-window : The number of seconds to keep attempting to send an email for.");
-
+	println!("	-h, --help           : Print this text");
+	println!("	-p, --port           : Port to listen on. Only works in listen mode");
+	println!("	-f, --db-path        : Path for the queue database. Seperate db to the smtpserver.");
+	println!("	-r, --retry-window   : The number of seconds to keep attempting to send an email for.");
+	println!("	c, --tls-certs-file  : Specifies the PEM file the TLS certificate is stored in. Listen mode only");
+	println!("	k, --tls-private-key : Specifies the PEM file the TLS private key is stored in. Listen mode only");
+	println!("	t, --enable-tls      : Enables tls upgrade support for listen mode");
+	println!("	T, --timeout         : Sets the socket timeout in milliseconds. Defaults to 5000");
 }
-fn relay_send(queue: EmailQueue, retry_window: Duration) -> ExitCode {
+fn relay_send(queue: EmailQueue, retry_window: Duration, config: &SMTPClientConfig) -> ExitCode {
 	loop {
 		//====== attempt to send next email in queue ======
 		let queued_email = match queue.peek(){
@@ -126,7 +130,7 @@ fn relay_send(queue: EmailQueue, retry_window: Duration) -> ExitCode {
 		let email = queued_email.email();
 		println!("======> sending email to {:?}",email.recipients_vec());
 		//send it
-		let result = resolve_and_send_email(email);
+		let result = resolve_and_send_email(email,config);
 		match result {
 			Ok(_) => {
 				//====== successfuly sent ======
