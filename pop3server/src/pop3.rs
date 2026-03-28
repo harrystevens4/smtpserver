@@ -6,6 +6,7 @@ use maildb::{MailDB,Email};
 use std::error::Error;
 use std::default::Default;
 use std::any::Any;
+use std::time::Duration;
 
 use rustls::{StreamOwned,ServerConfig,ServerConnection};
 use rustls_pki_types::{CertificateDer,PrivateKeyDer};
@@ -17,11 +18,25 @@ pub trait ReadWrite: Read + Write + Any {}
 impl ReadWrite for TcpStream {}
 impl ReadWrite for StreamOwned<ServerConnection,TcpStream> {}
 
-#[derive(Default)]
 pub struct POP3Config {
 	pub tls_enabled: bool,
 	pub tls_private_key: Option<String>,
 	pub tls_certs: Option<String>,
+	timeout: Duration,
+}
+impl Default for POP3Config {
+	fn default() -> Self {
+		POP3Config {
+			tls_enabled: false,
+			tls_private_key: None,
+			tls_certs: None,
+			timeout: Duration::new(5,0), //5 seconds
+		}
+	}
+}
+impl POP3Config {
+	pub fn timeout(&self) -> Duration {self.timeout.clone()}
+	pub fn set_timeout(&mut self, timeout: Duration) {self.timeout = timeout}
 }
 
 pub fn pop3_handshake(connection: &mut TcpStream) -> io::Result<()> {

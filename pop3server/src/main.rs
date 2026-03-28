@@ -7,6 +7,9 @@ use std::process::ExitCode;
 use args::Args;
 use std::{env,error};
 use maildb::MailDB;
+use std::time::Duration;
+use std::io;
+use std::io::ErrorKind;
 
 fn main() -> ExitCode {
 	let mut pop3_config = POP3Config::default();
@@ -17,6 +20,7 @@ fn main() -> ExitCode {
 		('k', Some("private-key"), true ),
 		('c', Some("certificate"), true ),
 		('t', Some("enable-tls"), false),
+		('T', Some("timeout"), true),
 	]);
 	if arguments.has('h'){
 		print_help();
@@ -26,6 +30,14 @@ fn main() -> ExitCode {
 	pop3_config.tls_private_key = arguments.get_value('k');
 	pop3_config.tls_certs = arguments.get_value('c');
 	pop3_config.tls_enabled = arguments.has('t');
+	if let Some(timeout_ms_str) = arguments.get_value('T') {
+		let Ok(timeout_ms) = timeout_ms_str.parse::<u64>()
+		else {
+			eprintln!("Could not parse timeout");
+			return ExitCode::FAILURE;
+		};
+		pop3_config.set_timeout(Duration::from_millis(timeout_ms));
+	}
 	if pop3_config.tls_enabled {
 		if pop3_config.tls_private_key.is_none() || pop3_config.tls_certs.is_none() {
 			eprintln!("private key and certificate must be provided for tls");
@@ -57,10 +69,24 @@ fn main() -> ExitCode {
 				return ExitCode::FAILURE;
 			},
 		};
+		//set timeouts
+		let timeout_result = connection.set_read_timeout(Some(pop3_config.timeout()))
+			.and_then(|_| connection.set_write_timeout(Some(pop3_config.timeout())));
+		if let Err(e) = timeout_result {
+			eprintln!("Could not set socket timeout: {e}");
+			return ExitCode::FAILURE;
+		}
 		println!("===> new connection: [{address}] <===");
 		match handle_connection(connection,&mail_db,&pop3_config){
 			Ok(_) => (),
 			Err(e) => {
+				if let Some(io_error) = e.downcast_ref::<io::Error>(){
+					//client timed out (more understandable than Resource temprarily unavailable)
+					if io_error.kind() == ErrorKind::WouldBlock {
+						eprintln!("handle_connection: Connection timed out");
+						continue;
+					}
+				}
 				eprintln!("handle_connection: {e}");
 				continue;
 			}
@@ -94,4 +120,5 @@ fn print_help(){
 	println!("	-t, --enable-tls         : Enables STARTTLS support");
 	println!("	-k, --private-key <path> : Specifies the private key pemfile to use for tls");
 	println!("	-c, --certificate <path> : Path of tls certificate");
+	println!("	-T, --timeout            : Socket timeout in milliseconds");
 }
