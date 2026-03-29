@@ -264,7 +264,7 @@ fn smtp_receive_email(connection: &mut Box<dyn ReadWrite>, config: &SMTPServerCo
 			},
 			"STARTTLS" if config.tls_enabled => {
 				//====== upgrade connection to tls ======
-				match <dyn Any>::downcast_ref::<TcpStream>(connection) {
+				match <dyn Any>::downcast_ref::<TcpStream>(connection.as_ref()) {
 					Some(mut tcp_stream) => {
 						//stream is a plain TcpStream
 						tcp_stream.write(b"220 Ready to start TLS\r\n")?;
@@ -276,15 +276,15 @@ fn smtp_receive_email(connection: &mut Box<dyn ReadWrite>, config: &SMTPServerCo
 							continue;
 						};
 						//upgrade
+						println!("starting tls upgrade...");
 						let new_connection = server_tls_upgrade(tcp_stream_clone,config)?;
 						//move connection back outside this scope
 						let old_connection = mem::replace(connection,Box::new(new_connection));
-						//close old connection
-						mem::drop(old_connection);
 						println!("upgrade successfull");
 					},
 					None => {
 						//stream already a tls connection
+						eprintln!("unable to upgrade: TLS already active");
 						connection.write(b"503 TLS already active")?;
 						continue;
 					}
