@@ -7,6 +7,7 @@ use rusqlite::{Connection,params,Error as SQLError,OptionalExtension};
 use sha256;
 use std::error::Error;
 use std::io;
+use std::collections::HashMap;
 
 #[derive(Debug,Clone)]
 pub struct QueuedEmail {
@@ -19,6 +20,9 @@ pub struct QueuedEmail {
 pub struct EmailQueue {
 	database: Connection,
 }
+
+#[derive(Debug,Clone)]
+pub struct UserCredentials (HashMap<String,String>);
 
 impl EmailQueue {
 	pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self,SQLError> {
@@ -159,29 +163,20 @@ impl EmailQueue {
 		",[id]);
 		Ok(())
 	}
-	pub fn verify_username(&self, username: &str) -> bool {
-		//number of matching email addresses
-		let matching_user_count = self.database.query_one("
-			SELECT COUNT(email_address)
+	pub fn get_credentials(&self) -> Result<UserCredentials,SQLError> {
+		let mut query = self.database.prepare("
+			SELECT email_address, password
 			FROM users
-			WHERE email_address = ?
-		",[username],|row| row.get(0)).unwrap_or(0);
-		if matching_user_count >= 1 {true} else {false}
-	}
-	pub fn verify_password(&self, username: &str, password: &str) -> bool {
-		//hash password
-		let hashed_password = sha256::digest(password);
-		//number of matching accounts with that username and password
-		let matching_user_count = self.database.query_one("
-			SELECT COUNT(email_address)
-			FROM users
-			WHERE email_address = ? AND password = ?
-		",[username,&hashed_password],|row| row.get(0)).unwrap_or(0);
-		if matching_user_count >= 1 {true} else {false}
+		")?;
+		let result = query
+			.query_map([],|row| Ok((row.get(0)?,row.get(1)?)))?
+			.filter_map(Result::ok);
+		Ok(UserCredentials(result.collect()))
 	}
 }
 
 impl QueuedEmail {
+	#[allow(dead_code)]
 	pub fn new(email: Email, time_queued: SystemTime) -> Self { 
 		QueuedEmail {
 			email,time_queued,id: None
@@ -194,5 +189,16 @@ impl QueuedEmail {
 impl From<Email> for QueuedEmail {
 	fn from(email: Email) -> Self {
 		QueuedEmail {email, time_queued: SystemTime::now(), id: None}
+	}
+}
+
+impl UserCredentials {
+	pub fn verify_username(&self, username: &str) -> bool {
+		self.0.contains_key(username)
+	}
+	pub fn verify_password(&self, username: &str, password: &str) -> bool {
+		//hash password
+		let hashed_password = sha256::digest(password);
+		self.0.get(username) == Some(&hashed_password)
 	}
 }

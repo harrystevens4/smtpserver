@@ -14,7 +14,6 @@ use std::time::{Duration,SystemTime};
 use std::error::Error;
 use std::io::Error as IoError;
 use std::default::Default;
-use std::rc::Rc;
 use domain::resolv::stub::StubResolver;
 use domain::base::iana::{Rtype};
 use domain::base::name::Name;
@@ -185,19 +184,20 @@ fn resolve_and_send_email(email: &Email, config: &SMTPClientConfig) -> Result<()
 
 fn relay_recv(queue: EmailQueue, port: u16, mut config: SMTPServerConfig) -> ExitCode {
 	//====== configure server ======
-	//move the queue into an Rc
-	let queue = Rc::new(queue);
 	config.set_auth_required(true);
-	//since rustqlite::Connection does not implement clone
-	//we can only use one copy of the queue and pass it around
-	//using the queue wrapped in an Rc
-	let queue_clone = queue.clone();
+	//get a record of users and hashed passwords
+	let user_credentials = match queue.get_credentials() {
+		Ok(c) => c, Err(e) => {
+			eprintln!("Failed to obtain stored user credentials: {e}");
+			return ExitCode::FAILURE;
+		}
+	};
+	let user_credentials_copy = user_credentials.clone();
 	config.set_check_user_func(
-		move |username| queue_clone.verify_username(username)
+		move |username| user_credentials_copy.verify_username(username)
 	);
-	let queue_clone = queue.clone();
 	config.set_check_password_func(
-		move |username,password| queue_clone.verify_password(username,password)
+		move |username,password| user_credentials.verify_password(username,password)
 	);
 	//====== listen for connections ======
 	let listener = match TcpListener::bind(("0.0.0.0",port)) {
@@ -227,6 +227,10 @@ fn relay_recv(queue: EmailQueue, port: u16, mut config: SMTPServerConfig) -> Exi
 			}
 		};
 		//====== queue new emails ======
+		if emails.len() == 0 {
+			println!("no emails queued");
+			continue;
+		}
 		let mut errors = false;
 		for email in emails {
 			match queue.enqueue(email){
