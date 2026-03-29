@@ -51,41 +51,51 @@ fn main() -> ExitCode {
 			return ExitCode::FAILURE;
 		}
 	};
+	if let Err(e) = listener.set_nonblocking(true) {
+		eprintln!("Error setting listener to nonblocking: {e}");
+		return ExitCode::FAILURE;
+	}
 	//====== accept incomming connections ======
 	let thread_pool_size = 10;
 	let mut thread_pool: Vec<thread::JoinHandle<Option<Vec<Email>>>> = vec![];
 	//Atomic reference counted thingies
 	let config_arc = Arc::new(config);
 	loop {
-		//====== wait for available slot in thread pool ======
-		loop {
-			//join any completed threads
-			for i in 0..(thread_pool.len()) {
-				if thread_pool[i].is_finished() {
-					//if the thread panicked panic here
-					if let Some(emails) = thread_pool.remove(i).join().unwrap() {
-						//threads return emails they received
-						for email in emails {
-							println!("====== new email ======");
-							println!("===> Senders: {:?}",email.senders_vec());
-							println!("===> Recipients: {:?}",email.recipients_vec());
-							println!("{}",email.data());
-							//store the email in the databse
-							if let Err(e) = mail_db.store_email(email){
-								eprintln!("Error storing mail: {e}");
-							};
-						}
+		//====== join any completed threads ======
+		for i in 0..(thread_pool.len()) {
+			if thread_pool[i].is_finished() {
+				//if the thread panicked panic here
+				if let Some(emails) = thread_pool.remove(i).join().unwrap() {
+					//threads return emails they received
+					for email in emails {
+						println!("====== new email ======");
+						println!("===> Senders: {:?}",email.senders_vec());
+						println!("===> Recipients: {:?}",email.recipients_vec());
+						println!("{}",email.data());
+						//store the email in the databse
+						if let Err(e) = mail_db.store_email(email){
+							eprintln!("Error storing mail: {e}");
+						};
 					}
-					break;
 				}
+				break;
 			}
-			if thread_pool.len() < thread_pool_size {break}
-			//wait for threads to free up
-			thread::sleep(Duration::from_millis(100));
 		}
 		//====== wait for a connection ======
+		//wait for a space in the thread pool
+		if thread_pool.len() >= thread_pool_size {
+			//wait for threads to free up
+			thread::sleep(Duration::from_millis(100));
+			continue;
+		}
+		//accept new connections
 		let (socket,addr) = match listener.accept() {
 			Ok(s) => s,
+			Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+				//no new connections available
+				thread::sleep(Duration::from_millis(50));
+				continue;
+			},
 			Err(e) => {
 				eprintln!("Error while connecting to client: {e}");
 				continue;
@@ -98,6 +108,11 @@ fn main() -> ExitCode {
 		//start the thread
 		thread_pool.push(thread::spawn(move ||{
 			let config = config_arc_clone;
+			//disable nonblocking
+			if let Err(e) = socket.set_nonblocking(false){
+				eprintln!("Error setting nonblocking: {e}");
+				return None;
+			}
 			//set timeout
 			let _ = socket
 				.set_read_timeout(Some(config.timeout()))
@@ -106,16 +121,6 @@ fn main() -> ExitCode {
 			//pass connection to receive function
 			let emails = match recieve_emails(socket,&config){
 				Ok(emails) => emails,
-				//WouldBlock is actualy connection timed out so lets make that clear
-				Err(e) if e.is::<io::Error>() => {
-					match e.downcast_ref().map(|e: &io::Error| e.kind()) {
-						Some(ErrorKind::WouldBlock) => {
-							eprintln!("Connection timed out");
-						},
-						_ => (),
-					}
-					return None;
-				},
 				Err(e) => {
 					eprintln!("receive_email: {}",e);
 					return None;
