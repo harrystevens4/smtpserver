@@ -320,7 +320,6 @@ fn smtp_ehlo(stream: &mut dyn ReadWrite) -> Result<Vec<String>,Box<dyn Error>> {
 	if line.starts_with("2"){
 		//====== read capability list ======
 		loop {
-			let line = readline(stream)?;
 			//check for error
 			if !line.starts_with("250") {
 				return Err(io::Error::other(format!("Error completing handshake: {line}")))?
@@ -330,6 +329,7 @@ fn smtp_ehlo(stream: &mut dyn ReadWrite) -> Result<Vec<String>,Box<dyn Error>> {
 			if line.starts_with("250 "){ //as opposed to "250-"
 				break;
 			}
+			line = readline(stream)?;
 		}
 	}else {
 		//====== fallback to HELO ======
