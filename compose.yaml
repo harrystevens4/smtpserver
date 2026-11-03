@@ -16,9 +16,9 @@ services:
         RUN mkdir -p /var/mail
         RUN apk add cargo sqlite-dev
         COPY . .
-        WORKDIR /smtpserver/smtpserver
+        WORKDIR /smtpserver
         RUN cargo build --release
-        CMD ["/smtpserver/smtpserver/target/release/smtpserver","-f","/var/mail/inbound_mail.db"]
+        CMD ["/smtpserver/target/release/smtpserver","-f","/var/mail/inbound_mail.db"]
 
   inbound_smtprelay:
     container_name: inbound_smtprelay
@@ -36,9 +36,9 @@ services:
         RUN mkdir -p /var/mail
         RUN apk add cargo sqlite-dev
         COPY . .
-        WORKDIR /smtpserver/smtprelay
+        WORKDIR /smtprelay
         RUN cargo build --release
-        CMD ["/smtpserver/smtprelay/target/release/smtprelay","listen"]
+        CMD ["/smtprelay/target/release/smtprelay","listen"]
 
   outbound_smtprelay:
     container_name: outbound_smtprelay
@@ -54,9 +54,9 @@ services:
         RUN mkdir -p /var/mail
         RUN apk add cargo sqlite-dev
         COPY . .
-        WORKDIR /smtpserver/smtprelay
+        WORKDIR /smtprelay
         RUN cargo build --release
-        CMD ["/smtpserver/smtprelay/target/release/smtprelay","send"]
+        CMD ["/smtprelay/target/release/smtprelay","send"]
 
   inbound_pop3server:
     container_name: pop3_mailserver
@@ -74,6 +74,6 @@ services:
         RUN mkdir -p /var/mail
         RUN apk add cargo sqlite-dev
         COPY . .
-        WORKDIR /smtpserver/pop3server
+        WORKDIR /pop3server
         RUN cargo build --release
-        CMD ["/smtpserver/pop3server/target/release/pop3server","-f","/var/mail/inbound_mail.db"]
+        CMD ["/pop3server/target/release/pop3server","-f","/var/mail/inbound_mail.db"]
