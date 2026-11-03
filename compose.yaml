@@ -1,3 +1,4 @@
+# this yaml file should sit in the parent directory of this git repository
 services:
 
   inbound_smtpserver:
@@ -7,7 +8,7 @@ services:
       - "25:25/tcp"
     volumes:
       - type: bind
-        source: /drives/d2p1/mail
+        source: /drives/d2p1/mail/data
         target: /var/mail
     build:
       context: .
@@ -24,11 +25,14 @@ services:
     container_name: inbound_smtprelay
     restart: unless-stopped
     ports:
-        - "9185:9185/tcp"
+        - "587:587/tcp"
     volumes:
       - type: bind
-        source: /drives/d2p1/mail
+        source: /drives/d2p1/mail/data
         target: /var/mail
+      - type: bind
+        source: /etc/letsencrypt/
+        target: /letsencrypt
     build:
       context: .
       dockerfile_inline: |
@@ -38,14 +42,14 @@ services:
         COPY . .
         WORKDIR /smtpserver/smtprelay
         RUN cargo build --release
-        CMD ["/smtpserver/smtprelay/target/release/smtprelay","listen"]
+        CMD ["/smtpserver/smtprelay/target/release/smtprelay","listen","-t","-c","/letsencrypt/live/stevens-server.co.uk/fullchain.pem","-k","/letsencrypt/live/stevens-server.co.uk/privkey.pem","-T","60000"]
 
   outbound_smtprelay:
     container_name: outbound_smtprelay
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /drives/d2p1/mail
+        source: /drives/d2p1/mail/data
         target: /var/mail
     build:
       context: .
@@ -65,15 +69,19 @@ services:
       - "110:110/tcp"
     volumes:
       - type: bind
-        source: /drives/d2p1/mail
+        source: /drives/d2p1/mail/data
         target: /var/mail
+      - type: bind
+        source: /etc/letsencrypt/
+        target: /letsencrypt
     build:
       context: .
       dockerfile_inline: |
         FROM alpine:latest
         RUN mkdir -p /var/mail
-        RUN apk add cargo sqlite-dev
+        RUN apk add cargo sqlite-dev netcat-openbsd
+        RUN mkdir -p /letsencrypt
         COPY . .
         WORKDIR /smtpserver/pop3server
         RUN cargo build --release
-        CMD ["/smtpserver/pop3server/target/release/pop3server","-f","/var/mail/inbound_mail.db"]
+        CMD ["/smtpserver/pop3server/target/release/pop3server","-f","/var/mail/inbound_mail.db","-t","-c","/letsencrypt/live/stevens-server.co.uk/fullchain.pem","-k","/letsencrypt/live/stevens-server.co.uk/privkey.pem","-T","60000"]
